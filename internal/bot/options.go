@@ -44,8 +44,8 @@ func notifyOptions() []*discordgo.ApplicationCommandOption {
 		return &discordgo.ApplicationCommandOption{Type: discordgo.ApplicationCommandOptionSubCommand, Name: name, Description: desc, Options: opts}
 	}
 	return []*discordgo.ApplicationCommandOption{
-		sub("map", "When the server is on a map", createOptions(rules.KindMap)...),
-		sub("player", "When a player is on the server", createOptions(rules.KindPlayer)...),
+		sub("map", "When the server is on a map (several maps in one notification: any of them, OR)", createOptions(rules.KindMap)...),
+		sub("player", "When a player is on the server (several players in one notification: all of them, AND)", createOptions(rules.KindPlayer)...),
 		sub("playercount", "When the number of players reaches a number", createOptions(rules.KindPlayerCount)...),
 		sub("status", "When the server goes online or offline", createOptions(rules.KindStatus)...),
 		sub("title-query", "When the server name contains a word", createOptions(rules.KindTitle)...),
@@ -83,9 +83,9 @@ func createOptions(kind rules.Kind) []*discordgo.ApplicationCommandOption {
 	var value *discordgo.ApplicationCommandOption
 	switch kind {
 	case rules.KindMap:
-		value = &discordgo.ApplicationCommandOption{Type: str, Name: valueOption(kind), Description: "Map name, like de_dust2", Required: true, Autocomplete: true}
+		value = &discordgo.ApplicationCommandOption{Type: str, Name: valueOption(kind), Description: "Map name, like de_dust2. Several maps in one notification (id) mean any of them (OR)", Required: true, Autocomplete: true}
 	case rules.KindPlayer:
-		value = &discordgo.ApplicationCommandOption{Type: str, Name: valueOption(kind), Description: "Player name", Required: true, Autocomplete: true}
+		value = &discordgo.ApplicationCommandOption{Type: str, Name: valueOption(kind), Description: "Player name. Several players in one notification (id) must all be online (AND)", Required: true, Autocomplete: true}
 	case rules.KindPlayerCount:
 		value = &discordgo.ApplicationCommandOption{Type: str, Name: valueOption(kind), Description: "Players (0-64), with a comparison: >=10, <5, =20, !=3. A plain number means at least", Required: true, Autocomplete: true}
 	case rules.KindStatus:

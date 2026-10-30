@@ -943,6 +943,19 @@ func TestIDKeepsTheGameServerAndTheSettingsOfTheNotification(t *testing.T) {
 	}
 }
 
+func TestSeveralMapsAndPlayersAreShownAsOrAndAnd(t *testing.T) {
+	e := newEnv(t)
+	setupGuild(t, e, "a.example:27015")
+	e.b.execute(nguild("u1", 0, "map", str("map-name", "de_a")))
+	id := int(ids(t, e, "u1")[0])
+	got := e.b.execute(nguild("u1", 0, "map", str("map-name", "de_b"), num("id", id)))
+	contains(t, got, "the map is one of `de_a`, `de_b`")
+	e.b.execute(nguild("u1", 0, "player", str("username", "Al"), num("id", id)))
+	e.b.execute(nguild("u1", 0, "player", str("username", "Bo"), num("id", id)))
+	got = e.b.execute(nguild("u1", 0, "list"))
+	contains(t, got, "the map is one of `de_a`, `de_b` **and** `Al` is online **and** `Bo` is online")
+}
+
 func TestIDChecks(t *testing.T) {
 	e := newEnv(t)
 	setupGuild(t, e, "a.example:27015")

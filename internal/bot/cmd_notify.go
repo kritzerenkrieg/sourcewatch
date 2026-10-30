@@ -265,12 +265,12 @@ func saved(n rules.Notification, addr, hint string) string {
 	case addr != "":
 		on = " on " + code(addr)
 	}
-	if len(n.Conditions) == 1 {
-		fmt.Fprintf(&sb, "You will be told %s when %s%s.\n", where, n.Conditions[0].Phrase(), on)
+	if phrases := n.Phrases(); len(phrases) == 1 {
+		fmt.Fprintf(&sb, "You will be told %s when %s%s.\n", where, phrases[0], on)
 	} else {
 		fmt.Fprintf(&sb, "You will be told %s when all of these are true%s:\n", where, on)
-		for _, c := range n.Conditions {
-			sb.WriteString("• " + c.Phrase() + "\n")
+		for _, p := range phrases {
+			sb.WriteString("• " + p + "\n")
 		}
 	}
 	fmt.Fprintf(&sb, "Cooldown: %s after it fires.\n", minsText(n.EffectiveCooldown()))
@@ -453,10 +453,7 @@ func parseStatus(v string) (online, ok bool) {
 }
 
 func describe(n rules.Notification) string {
-	parts := make([]string, len(n.Conditions))
-	for i, c := range n.Conditions {
-		parts[i] = c.Phrase()
-	}
+	parts := n.Phrases()
 	via := "channel"
 	if n.EffectiveDelivery() == rules.DeliveryDM {
 		via = "DM"
@@ -729,11 +726,7 @@ func settingsText(n rules.Notification, addr, header string) string {
 		fmt.Fprintf(&sb, "• Game server: %s\n", code(addr))
 	}
 	sb.WriteString("• When: ")
-	parts := make([]string, len(n.Conditions))
-	for i, c := range n.Conditions {
-		parts[i] = c.Phrase()
-	}
-	sb.WriteString(strings.Join(parts, " **and** "))
+	sb.WriteString(strings.Join(n.Phrases(), " **and** "))
 	return sb.String()
 }
 

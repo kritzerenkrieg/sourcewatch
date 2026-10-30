@@ -94,7 +94,7 @@ For DMs the bot sends you a test message first. If Discord blocks it, open a DM 
 
 ## Combine conditions with `id`
 
-Add `id:12` to any `/notify` type to put that condition into notification **12** instead of making a new one. **All** of its conditions must be true together (up to 5), and it fires once when they all become true.
+Add `id:12` to any `/notify` type to put that condition into notification **12** instead of making a new one. **All** of its conditions must be true together (up to 5, maps are the exception, see below), and it fires once when they all become true.
 
 Example:
 
@@ -102,6 +102,13 @@ Example:
 2. `/notify playercount value:>=10 id:12` makes it fire only when the map is de_dust2 **and** there are at least 10 players.
 
 A combined notification keeps its game server, delivery and cooldown.
+
+**AND and OR.** Conditions of different types are always **AND**: all of them must hold. Two types follow a fixed rule inside one notification:
+
+- Several **players** are **AND**. Every one of those players must be online.
+- Several **maps** are **OR**. The server being on any one of those maps is enough.
+
+So `{de_dust2 or de_inferno} AND {Alice and Bob}` fires only when the server is on one of those two maps and both Alice and Bob are online. Moving from one of the maps to another keeps it true, so it does not fire again until it has stopped being true. The other types are plain AND.
 
 ## Manage your notifications
 

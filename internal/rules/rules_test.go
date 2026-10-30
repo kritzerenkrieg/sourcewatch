@@ -28,6 +28,9 @@ func players(op string, n int) Condition {
 	return Condition{Kind: KindPlayerCount, Op: op, N: n}
 }
 
+// quick gives a notification a cooldown of 1 s, since run's steps are a minute apart.
+func quick(n Notification) Notification { n.CooldownSec = 1; return n }
+
 // run feeds states to a notification, one a minute, and returns at which steps it fired.
 func run(n Notification, states ...Snapshot) (fired []int, last Notification) {
 	for i, st := range states {
@@ -443,5 +446,59 @@ func TestPlayerCountsStopAtSixtyFour(t *testing.T) {
 	}
 	if err := (Condition{Kind: KindPlayerCount, Op: ">=", N: 65}).Validate(); err == nil {
 		t.Error("65 must be refused")
+	}
+}
+
+func TestSeveralMapsAreOredAndSeveralPlayersAreAnded(t *testing.T) {
+	at := func(m string, names ...string) Snapshot { return snap("T", m, len(names), names...) }
+	for _, tc := range []struct {
+		name   string
+		n      Notification
+		states []Snapshot
+		want   []int
+	}{
+		{"maps: either one fires", quick(notif(mapIs("de_a"), mapIs("de_b"))),
+			[]Snapshot{at("de_x"), at("de_a"), at("de_x"), at("de_b")}, []int{1, 3}},
+		{"maps: going from one to the other stays true, so it does not fire again", notif(mapIs("de_a"), mapIs("de_b")),
+			[]Snapshot{at("de_x"), at("de_a"), at("de_b"), at("de_a")}, []int{1}},
+		{"maps: neither does not fire", notif(mapIs("de_a"), mapIs("de_b")),
+			[]Snapshot{at("de_x"), at("de_y")}, nil},
+		{"players: all must be online", notif(hasPlayer("al"), hasPlayer("bo")),
+			[]Snapshot{at("m"), at("m", "al"), at("m", "bo"), at("m", "al", "bo")}, []int{3}},
+		{"kinds are anded: (a or b) and both players", quick(notif(mapIs("de_a"), mapIs("de_b"), hasPlayer("al"), hasPlayer("bo"))),
+			[]Snapshot{at("de_x", "al", "bo"), at("de_a", "al"), at("de_b", "al", "bo"), at("de_x", "al", "bo"), at("de_a", "al", "bo")}, []int{2, 4}},
+		{"kinds are anded: the right map but one player is not enough", notif(mapIs("de_a"), mapIs("de_b"), hasPlayer("al"), hasPlayer("bo")),
+			[]Snapshot{at("de_x"), at("de_a", "al"), at("de_b", "bo")}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, _ := run(tc.n, tc.states...); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("fired at %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPhrasesJoinTheMapsIntoOnePart(t *testing.T) {
+	for _, tc := range []struct {
+		n    Notification
+		want []string
+	}{
+		{notif(mapIs("de_a")), []string{"the map is `de_a`"}},
+		{notif(mapIs("de_a"), mapIs("de_b")), []string{"the map is one of `de_a`, `de_b`"}},
+		{notif(hasPlayer("al"), mapIs("de_a"), hasPlayer("bo"), mapIs("de_b")),
+			[]string{"`al` is online", "the map is one of `de_a`, `de_b`", "`bo` is online"}},
+	} {
+		if got := tc.n.Phrases(); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("Phrases() = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+func TestSeveralMapsOnlyAreAnnouncedAsAMapChange(t *testing.T) {
+	n := notif(mapIs("de_a"), mapIs("de_b"))
+	n, _ = Evaluate(snap("T", "de_x", 1), n, t0)
+	_, ev := Evaluate(snap("T", "de_b", 1), n, t0.Add(time.Minute))
+	if ev == nil || ev.Title != "Map change" || !strings.Contains(ev.Message, "de_b") {
+		t.Fatalf("event %+v, want a map change to de_b", ev)
 	}
 }

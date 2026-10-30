@@ -312,16 +312,60 @@ func (c Condition) level(cur Snapshot) level {
 	return levelNo
 }
 
-// level is the level of all conditions together: no if any is no, otherwise unknown if any is.
+// level is the level of all conditions together. Conditions of different kinds are ANDed, and so
+// are several conditions of one kind, except map conditions, which are ORed: the map is any of them
+// (E21). The result is no if any group is no, otherwise unknown if any is.
 func (n Notification) level(cur Snapshot) level {
 	out := levelYes
+	mapLevel, hasMap := levelNo, false // the map group: yes if any map matches
 	for _, c := range n.Conditions {
-		switch c.level(cur) {
+		l := c.level(cur)
+		if c.Kind == KindMap {
+			hasMap = true
+			if l == levelYes || (l == levelUnknown && mapLevel == levelNo) {
+				mapLevel = l
+			}
+			continue
+		}
+		switch l {
 		case levelNo:
 			return levelNo
 		case levelUnknown:
 			out = levelUnknown
 		}
+	}
+	if hasMap {
+		switch mapLevel {
+		case levelNo:
+			return levelNo
+		case levelUnknown:
+			out = levelUnknown
+		}
+	}
+	return out
+}
+
+// Phrases describes the conditions as parts to join with "and": every part must hold. The map
+// conditions are one part, since any of them will do.
+func (n Notification) Phrases() []string {
+	var out, maps []string
+	mapAt := -1
+	for _, c := range n.Conditions {
+		if c.Kind != KindMap {
+			out = append(out, c.Phrase())
+			continue
+		}
+		if mapAt < 0 {
+			mapAt = len(out)
+			out = append(out, "")
+		}
+		maps = append(maps, span(c.Text))
+	}
+	switch {
+	case len(maps) == 1:
+		out[mapAt] = "the map is " + maps[0]
+	case len(maps) > 1:
+		out[mapAt] = "the map is one of " + strings.Join(maps, ", ")
 	}
 	return out
 }
@@ -357,13 +401,9 @@ func Evaluate(cur Snapshot, n Notification, now time.Time) (Notification, *Event
 
 func newEvent(cur Snapshot, n Notification) *Event {
 	title, msg := "All conditions met", ""
-	if len(n.Conditions) == 1 {
-		title, msg = single(cur, n.Conditions[0])
+	if phrases := n.Phrases(); len(phrases) == 1 {
+		title, msg = single(cur, n.Conditions[0]) // one condition, or only maps: the map it changed to
 	} else {
-		phrases := make([]string, len(n.Conditions))
-		for i, c := range n.Conditions {
-			phrases[i] = c.Phrase()
-		}
 		msg = fmt.Sprintf("%s: %s.", span(cur.Title), strings.Join(phrases, " and "))
 	}
 	return &Event{NotificationID: n.ID, UserID: n.UserID, ServerID: n.ServerID, Title: title, Message: msg,
