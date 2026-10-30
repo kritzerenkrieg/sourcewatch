@@ -183,6 +183,10 @@ func syncSessions(tx execer, serverID int64, names map[string]bool, prevAt, now 
 			SELECT ?, id, ?, ?, 1 FROM players WHERE name = ?`, serverID, ms(now), ms(now), n); err != nil {
 			return err
 		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO server_players(server_id, player_id)
+			SELECT ?, id FROM players WHERE name = ?`, serverID, n); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -206,9 +210,10 @@ func (s *Store) Maps(serverID int64) ([]string, error) {
 	return s.strings("SELECT DISTINCT map FROM map_history WHERE server_id = ?", serverID)
 }
 
-// PlayerNames returns every player name seen on the server.
+// PlayerNames returns every player name seen on the server. It reads server_players, which grows
+// with the players, not with their visits.
 func (s *Store) PlayerNames(serverID int64) ([]string, error) {
-	return s.strings(`SELECT DISTINCT p.name FROM sessions s JOIN players p ON p.id = s.player_id WHERE s.server_id = ?`, serverID)
+	return s.strings(`SELECT p.name FROM server_players sp JOIN players p ON p.id = sp.player_id WHERE sp.server_id = ?`, serverID)
 }
 
 func (s *Store) strings(q string, args ...any) ([]string, error) {

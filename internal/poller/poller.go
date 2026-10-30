@@ -61,7 +61,7 @@ func (p *Poller) Run(ctx context.Context, addrs []string) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			p.runServer(ctx, a)
+			p.runServer(ctx, a, 0)
 		}()
 	}
 	wg.Wait()
@@ -82,7 +82,11 @@ const (
 	fbApplied                  // alive, with a newer scan
 )
 
-func (p *Poller) runServer(ctx context.Context, addr string) {
+// runServer polls addr until ctx is cancelled. The first poll comes after first.
+func (p *Poller) runServer(ctx context.Context, addr string, first time.Duration) {
+	if !sleep(ctx, first) {
+		return
+	}
 	failures, known, online := 0, false, false
 	var fb fbState
 	for {
@@ -122,14 +126,24 @@ func (p *Poller) runServer(ctx context.Context, addr string) {
 		if emit {
 			p.OnUpdate(u)
 		}
-
-		t := time.NewTimer(Delay(p.Interval, p.Jitter, rand.Float64()))
-		select {
-		case <-ctx.Done():
-			t.Stop()
+		if !sleep(ctx, Delay(p.Interval, p.Jitter, rand.Float64())) {
 			return
-		case <-t.C:
 		}
+	}
+}
+
+// sleep waits for d, and reports false when ctx is cancelled first.
+func sleep(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }
 

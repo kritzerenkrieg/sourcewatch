@@ -131,6 +131,14 @@ CREATE TABLE guild_blacklist (
 	added_at INTEGER NOT NULL,
 	PRIMARY KEY (scope, name_key)
 );
+`, `
+-- The players seen on each server, so their names are found without reading every session.
+CREATE TABLE server_players (
+	server_id INTEGER NOT NULL REFERENCES servers(id),
+	player_id INTEGER NOT NULL REFERENCES players(id),
+	PRIMARY KEY (server_id, player_id)
+) WITHOUT ROWID;
+INSERT OR IGNORE INTO server_players(server_id, player_id) SELECT DISTINCT server_id, player_id FROM sessions;
 `}
 
 type Store struct{ db *sql.DB }

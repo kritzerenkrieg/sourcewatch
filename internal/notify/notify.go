@@ -15,6 +15,9 @@ import (
 var (
 	// ErrDMClosed means Discord refused the DM (error 50007) (E7).
 	ErrDMClosed = errors.New("discord refused the DM")
+	// ErrChannelRefused means Discord refused a channel message: the channel is gone, or the bot may
+	// not see it or post in it (errors 10003, 50001 and 50013) (D4).
+	ErrChannelRefused = errors.New("discord refused the channel message")
 	// ErrUnauthorized means Discord rejected the bot token. Retrying cannot help.
 	ErrUnauthorized = errors.New("discord rejected the bot token")
 )
@@ -114,16 +117,16 @@ type Marker interface{ MarkUndeliverable(id int64) error }
 
 // Deliver sends the events. People who get the same message in the same channel are mentioned
 // together in one message, like "@Kritz @Player2 @Player3 Map change …", instead of one message each.
-// DMs are always one person each. A refused DM marks its notification undeliverable and delivery goes
-// on with the rest (E7). A rejected token stops everything. Other errors are collected and returned
-// after all messages were tried.
+// DMs are always one person each. A refused DM (E7), or a refused channel message (D4), marks the
+// notifications it was for undeliverable, and delivery goes on with the rest. A rejected token stops
+// everything. Other errors are collected and returned after all messages were tried.
 func Deliver(ctx context.Context, n Notifier, m Marker, events []rules.Event) error {
 	var errs []error
 	for _, g := range groupEvents(events) {
 		err := n.Send(ctx, g.target, g.title, g.message)
 		switch {
 		case err == nil:
-		case errors.Is(err, ErrDMClosed):
+		case errors.Is(err, ErrDMClosed), errors.Is(err, ErrChannelRefused):
 			for _, id := range g.notificationIDs {
 				if merr := m.MarkUndeliverable(id); merr != nil {
 					errs = append(errs, merr)
@@ -190,8 +193,13 @@ func mapErr(err error) error {
 	}
 	var re *discordgo.RESTError
 	if errors.As(err, &re) {
-		if re.Message != nil && re.Message.Code == discordgo.ErrCodeCannotSendMessagesToThisUser {
-			return fmt.Errorf("%w: %v", ErrDMClosed, err)
+		if re.Message != nil {
+			switch re.Message.Code {
+			case discordgo.ErrCodeCannotSendMessagesToThisUser:
+				return fmt.Errorf("%w: %v", ErrDMClosed, err)
+			case discordgo.ErrCodeUnknownChannel, discordgo.ErrCodeMissingAccess, discordgo.ErrCodeMissingPermissions:
+				return fmt.Errorf("%w: %v", ErrChannelRefused, err)
+			}
 		}
 		if re.Response != nil && re.Response.StatusCode == 401 {
 			return fmt.Errorf("%w: %v", ErrUnauthorized, err)

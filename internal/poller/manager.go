@@ -3,6 +3,7 @@ package poller
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 // Manager polls game servers that people are listening to, added and removed at
@@ -25,20 +26,51 @@ func NewManager(ctx context.Context, p *Poller) *Manager {
 	return &Manager{p: p, ctx: ctx, w: map[string]*watch{}}
 }
 
-// Watch adds a listener for addr and starts polling it if it was not polled yet.
+// Watch adds a listener for addr and starts polling it at once if it was not polled yet.
 func (m *Manager) Watch(addr string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.add(addr) {
+		m.start(addr, 0)
+	}
+}
+
+// WatchAll adds a listener for each address, as Watch does. It is for the servers known at
+// startup: the ones it starts are not all polled at once, but have their first polls spread
+// evenly over one interval, so they are not queried, stored and checked for notifications in
+// the same moment.
+func (m *Manager) WatchAll(addrs []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var started []string
+	for _, a := range addrs {
+		if m.add(a) {
+			started = append(started, a)
+		}
+	}
+	for i, a := range started {
+		m.start(a, time.Duration(i)*m.p.Interval/time.Duration(len(started)))
+	}
+}
+
+// add counts a listener for addr and reports whether addr is new, so that it needs starting.
+func (m *Manager) add(addr string) bool {
 	if w, ok := m.w[addr]; ok {
 		w.n++
-		return
+		return false
 	}
+	m.w[addr] = &watch{n: 1}
+	return true
+}
+
+// start polls addr in its own goroutine, the first time after first.
+func (m *Manager) start(addr string, first time.Duration) {
 	ctx, cancel := context.WithCancel(m.ctx)
-	m.w[addr] = &watch{n: 1, cancel: cancel}
+	m.w[addr].cancel = cancel
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		m.p.runServer(ctx, addr)
+		m.p.runServer(ctx, addr, first)
 	}()
 }
 

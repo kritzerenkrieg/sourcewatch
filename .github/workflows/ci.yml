@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+      - name: Format
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Vet
+        run: go vet ./...
+      - name: Build the static binary (A1)
+        run: CGO_ENABLED=0 go build ./...
+      - name: Test
+        run: go test -race ./...
+      - name: Check DECISIONS.md and ROADMAP.md
+        run: python3 scripts/check_dlad.py
+
+  debian:
+    name: Static binary on Debian (A1, A3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+      - name: Build
+        run: |
+          CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=ci" -o sourcewatch ./cmd/sourcewatch
+          file sourcewatch | tee /dev/stderr | grep -q 'statically linked'
+      - name: Run it in a bare Debian container
+        run: |
+          docker run -d --name sourcewatch -w /tmp -e SOURCEWATCH_SERVERS=127.0.0.1:27015 \
+            -v "$PWD/sourcewatch:/usr/local/bin/sourcewatch:ro" debian:stable-slim sourcewatch
+          for i in $(seq 1 20); do
+            docker logs sourcewatch 2>&1 | grep -q 'config loaded' && break
+            sleep 0.5
+          done
+          docker logs sourcewatch 2>&1 | tee sourcewatch.log
+          grep -q 'version=ci' sourcewatch.log
+          grep -q 'config loaded' sourcewatch.log
+          test "$(docker inspect -f '{{.State.Running}}' sourcewatch)" = true
+          docker stop sourcewatch
+
+  systemd:
+    name: README install under systemd (A3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+      - name: Build, as the README says
+        run: CGO_ENABLED=0 go build -o sourcewatch ./cmd/sourcewatch
+      - name: Run the README install steps
+        run: |
+          # Each step is the sh block after an "<!-- install step N -->" line of the README.
+          step() {
+            awk -v want="<!-- install step $1 -->" '
+              $0 == want { on = 1; next }
+              on && /^```sh$/ { code = 1; next }
+              code && /^```$/ { exit }
+              code { print }' README.md
+          }
+          step 1 | tee step1.sh && test -s step1.sh && bash -ex step1.sh
+          # Instead of sudoedit: a server to poll and no token, so it runs without Discord.
+          echo '{"servers": ["127.0.0.1:27015"], "database": "sourcewatch.db"}' | sudo tee /etc/sourcewatch/config.json >/dev/null
+          test "$(sudo stat -c '%a %U' /etc/sourcewatch/config.json)" = "600 sourcewatch"
+          step 2 | tee step2.sh && test -s step2.sh && bash -ex step2.sh
+      - name: Check the service
+        run: |
+          systemd-analyze verify /etc/systemd/system/sourcewatch.service
+          for i in $(seq 1 20); do
+            sudo test -f /var/lib/sourcewatch/sourcewatch.db && break
+            sleep 0.5
+          done
+          systemctl is-active sourcewatch
+          sudo test -f /var/lib/sourcewatch/sourcewatch.db
+      - name: Kill it and see it restart
+        run: |
+          pid=$(systemctl show -p MainPID --value sourcewatch)
+          sudo kill -9 "$pid"
+          start=$(date +%s)
+          while :; do
+            now=$(systemctl show -p MainPID --value sourcewatch)
+            if [ "$now" != 0 ] && [ "$now" != "$pid" ] && systemctl is-active --quiet sourcewatch; then
+              break
+            fi
+            if [ $(( $(date +%s) - start )) -ge 15 ]; then
+              echo "not restarted after 15 s"
+              exit 1
+            fi
+            sleep 0.5
+          done
+          echo "restarted after $(( $(date +%s) - start )) s, PID $pid -> $now"
+      - name: Service log
+        if: always()
+        run: sudo journalctl -u sourcewatch --no-pager | tail -n 30
+
+  vulncheck:
+    name: Vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  secrets:
+    name: Secret scan (A2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        env:
+          VERSION: 8.30.1
+        working-directory: ${{ runner.temp }}
+        run: |
+          base="https://github.com/gitleaks/gitleaks/releases/download/v$VERSION"
+          tarball="gitleaks_${VERSION}_linux_x64.tar.gz"
+          curl -sSfLO "$base/$tarball"
+          curl -sSfLO "$base/gitleaks_${VERSION}_checksums.txt"
+          grep " $tarball\$" "gitleaks_${VERSION}_checksums.txt" | sha256sum -c -
+          tar -xzf "$tarball" gitleaks
+      - name: Scan the full history
+        run: '"$RUNNER_TEMP/gitleaks" git --redact --verbose --exit-code 1 .'

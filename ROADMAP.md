@@ -53,6 +53,7 @@ Keep the diagram in sync with the phase headings below: one node per phase, in o
 - [x] `playercount` fires once when its condition becomes true, rearms when it stops being true, and does not fire again within a configurable cooldown, default 60 minutes (C7). Done when: tests show one event for a sustained condition, none inside the cooldown, and a new event after it clears, rearms and the cooldown has passed.
 - [x] Suggest similar `player` and `map` values from history when there is no exact match (C5, C7). Done when: tests show exact match first, then prefix, substring and near-miss typos (for example `dust` and `de_dust` suggest `de_dust2`), and an empty list when nothing is similar.
 - [x] Per-user cooldowns of 5 seconds (C2). Done when: a test shows a second matching event inside 5 s is suppressed and one after 5 s is delivered.
+- [x] An event held back by the per-user cooldown is not saved as fired, so it fires at the next poll (C2, C9). Done when: store tests show two notifications of one user firing in the same poll delivered one poll apart, and the same for a notification for all servers firing on two servers within 5 s.
 
 ## Phase D: Delivery
 
@@ -65,6 +66,7 @@ Keep the diagram in sync with the phase headings below: one node per phase, in o
 - [x] Mention the player by Discord ID and always set `allowed_mentions` with `parse` empty and only that ID (D2). Done when: a test shows the message contains `<@id>`, and that a player name containing `@everyone` is sent as plain text with no ping allowed.
 - [x] Handle closed DMs (error `50007`) for DM notifications (E7). Done when: a test with a stubbed 50007 response follows the E7 decision.
 - [x] Honour `retry_after` on 429 and stop on 401 (D1). Done when: `httptest` tests cover the 429 wait and the 401 stop.
+- [x] A channel notification that Discord refuses (unknown channel, missing access or permissions) is marked undeliverable and the user is told (D4, E7). Done when: notifier tests map errors 10003, 50001 and 50013, a delivery test marks every notification of a refused channel message, and a handler test shows the notice with the channel reason.
 
 ## Phase E: Server bot
 
@@ -88,15 +90,16 @@ Keep the diagram in sync with the phase headings below: one node per phase, in o
 - [x] `/notify show` shares the list with the channel (E11). Done when: a test shows its reply is public, carries no private notices, and cannot ping.
 - [x] `/admin settings`: channel delivery, default delivery, default cooldown, active, and the player blacklist (E15). Done when: tests cover permission, each setting, that the off switch blocks every command but `/admin`, and the blacklist in creation, delivery and `/status`.
 - [x] People with the same notification in the same channel are mentioned together in one message (E16). Done when: delivery tests show one message mentioning everyone once, separate messages for different text or channels, no merging of DMs, and splitting of large groups.
+- [x] Notifications start over when sourcewatch is turned back on in a Discord server, or when a refused delivery is switched back on (E19). Done when: store tests show that in both cases a condition that became true while it was skipped does not fire, and that it fires once the condition stops and holds again.
 
 ## Phase F: Release
 
 **Goal:** a runnable, documented service.
 **Exit:** a fresh Debian host runs it under systemd from the README alone.
 
-- [ ] Single static binary build, cross-compiled for the chosen host (A1, A3). Done when: `CGO_ENABLED=0 go build` produces a binary that runs on the Debian server.
-- [ ] Run as a service (systemd or similar) with restart on failure (A3). Done when: killing the process restarts it within a few seconds.
-- [ ] README with setup, config reference and the logo from `assets/` (A2). Done when: the setup steps work on a clean host.
+- [x] Single static binary build, cross-compiled for the chosen host (A1, A3). Done when: `CGO_ENABLED=0 go build` produces a binary that runs on the Debian server.
+- [x] Run as a service (systemd or similar) with restart on failure (A3). Done when: killing the process restarts it within a few seconds.
+- [x] README with setup, config reference and the logo from `assets/` (A2). Done when: the setup steps work on a clean host.
 
 ## Later / ideas
 

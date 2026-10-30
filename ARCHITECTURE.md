@@ -44,11 +44,11 @@ poller ──A2S/UDP──> game servers
 
 | Component | Responsibility | Depends on | Owns (data/state) |
 |---|---|---|---|
-| Poller | Queries each server every 60 s with jitter (B3). `A2S_INFO` always, `A2S_PLAYER` only when players > 0. Challenge handshake per query, 2 s timeout, 2 retries, offline after 3 failed cycles. Bots filtered from counts. | A2S client (B2) | Nothing persistent |
+| Poller | Queries each server every 60 s with jitter (B3). At startup the first polls are spread over one interval. `A2S_INFO` always, `A2S_PLAYER` only when players > 0. Challenge handshake per query, 2 s timeout, 2 retries, offline after 3 failed cycles. Bots filtered from counts. | A2S client (B2) | Nothing persistent |
 | Store | Server list, last known state per server, notifications, per-user cooldowns. | SQLite | All persistent state |
 | Rules | Compares new state with last state and notifications. A matching rule out of its 5 s cooldown produces an event (C1, C2, C4). | Store | Nothing |
 | Notifiers | One interface, `Send(target, title, message)`. Providers are plugins. | Rules | Nothing |
-| Discord notifier | Sends a fired notification over Discord REST: in the channel `/notify` was run in (default) or by DM (E6). Mentions the player by Discord ID and always sets `allowed_mentions` with only that ID (D2). Honours `retry_after` on 429, stops on 401. | `discordgo` | Nothing |
+| Discord notifier | Sends a fired notification over Discord REST: in the channel `/notify` was run in (default) or by DM (E6). Mentions the player by Discord ID and always sets `allowed_mentions` with only that ID (D2). Honours `retry_after` on 429, stops on 401. A refused DM or channel marks the notification undeliverable (E7, D4). | `discordgo` | Nothing |
 | Bot | Slash command `/notify` (conditions: map, player, playercount, status, title-query; C1) and its management commands (C6). A Discord server sets the target game server and its players use `/notify` against it (C6). | `discordgo` (A5) | Nothing |
 
 ## D. Key flows
@@ -114,6 +114,9 @@ README.md  the guide for people using the bot
 assets/    logo.png, logo.svg
 scripts/   check_dlad.py (validates DECISIONS.md and ROADMAP.md)
 docs/      discord-guide.md (the guide to paste into a Discord channel, in messages under 2000 characters)
+cmd/       sourcewatch/main.go (starts the poller and the bot together)
+internal/  app, bot, config, notify, poller, rules, store (one package per component of section C)
+deploy/    sourcewatch.service (the systemd unit, A3)
+.github/   workflows/ci.yml (format, vet, static build, race tests, Debian run, README install under systemd,
+           docs check, govulncheck, gitleaks), workflows/release.yml (static Linux binaries for each v* tag)
 ```
-
-Go source layout is to be set in Phase A scaffolding.

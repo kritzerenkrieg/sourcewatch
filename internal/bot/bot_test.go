@@ -48,6 +48,14 @@ func newEnv(t *testing.T) *env {
 		switch host {
 		case "localhost", "intranet.example":
 			return []net.IP{net.ParseIP("10.0.0.5")}, nil
+		case "v6only.example":
+			return []net.IP{net.ParseIP("2606:2800:220:1::1")}, nil
+		case "v6loopback.example":
+			return []net.IP{net.ParseIP("::1")}, nil
+		case "mixed.example":
+			return []net.IP{net.ParseIP("93.184.216.34"), net.ParseIP("fd00::1")}, nil
+		case "cgnat.example":
+			return []net.IP{net.ParseIP("100.64.1.1")}, nil
 		case "nxdomain.example":
 			return nil, errors.New("no such host")
 		}
@@ -116,6 +124,11 @@ func TestNormalizeAddr(t *testing.T) {
 		{"  1.2.3.4:27015  ", "1.2.3.4:27015", ""},
 		{"localhost:27015", "", "not a public address"},
 		{"intranet.example:27015", "", "not a public address"},
+		{"v6only.example:27015", "", "no IPv4 address"},
+		{"v6loopback.example:27015", "", "not a public address"},
+		{"mixed.example:27015", "", "not a public address"},
+		{"cgnat.example:27015", "", "not a public address"},
+		{"example.com:027016", "example.com:27016", ""},
 		{"host:0", "", "not a valid port"},
 		{"host:99999", "", "not a valid port"},
 		{"bad host:27015", "", "not a valid host"},
@@ -133,7 +146,7 @@ func TestNormalizeAddr(t *testing.T) {
 	}
 	// Real IP checks, without the stub.
 	lookupIP = net.LookupIP
-	for _, in := range []string{"127.0.0.1:27015", "192.168.1.5:27015", "10.0.0.1:27015", "169.254.1.1:27015", "172.16.0.1:27015", "0.0.0.0:27015"} {
+	for _, in := range []string{"127.0.0.1:27015", "192.168.1.5:27015", "10.0.0.1:27015", "169.254.1.1:27015", "172.16.0.1:27015", "0.0.0.0:27015", "100.64.0.1:27015", "198.18.0.1:27015"} {
 		if _, err := normalizeAddr(in); err == nil {
 			t.Errorf("%s should be refused", in)
 		}
@@ -583,6 +596,23 @@ func TestACrashingCommandIsAnsweredNotFatal(t *testing.T) {
 	}
 }
 
+func TestAPanicInAutocompleteOrAButtonIsLoggedNotFatal(t *testing.T) {
+	var logs strings.Builder
+	b := &Bot{log: slog.New(slog.NewTextHandler(&logs, nil))} // no store, so every lookup panics
+	o := str("map-name", "de")
+	o.Focused = true
+	ac := ndm("u1", "map", o)
+	ac.Type = discordgo.InteractionApplicationCommandAutocomplete
+	press := &discordgo.Interaction{Type: discordgo.InteractionMessageComponent, User: &discordgo.User{ID: "u1"},
+		Data: discordgo.MessageComponentInteractionData{CustomID: customResetConfirm}}
+	for _, in := range []*discordgo.Interaction{ac, press} {
+		b.onInteraction(nil, &discordgo.InteractionCreate{Interaction: in}) // returns instead of crashing
+	}
+	if n := strings.Count(logs.String(), "interaction panicked"); n != 2 {
+		t.Errorf("%d panics logged, want 2:\n%s", n, logs.String())
+	}
+}
+
 // --- layout ---
 
 // --- /notify: one subcommand per type, plus list and remove ---
@@ -975,6 +1005,25 @@ func TestNotifyListAndRemove(t *testing.T) {
 	}
 }
 
+func TestRemoveOnlyDeletesANotificationMadeHere(t *testing.T) {
+	e := newEnv(t)
+	setupGuild(t, e, "a.example:27015")
+	e.b.execute(nguild("u1", 0, "status", str("value", "offline")))
+	id := int(ids(t, e, "u1")[0])
+
+	// The same user in another Discord server, and in a DM with the bot.
+	e.b.execute(guildServer(e, "g2", "z.example:27015"))
+	elsewhere := nguild("u1", 0, "remove", num("id", id))
+	elsewhere.GuildID = "g2"
+	for _, in := range []*discordgo.Interaction{elsewhere, ndm("u1", "remove", num("id", id))} {
+		contains(t, e.b.execute(in), fmt.Sprintf("no notification with ID %d here", id))
+	}
+	if len(ids(t, e, "u1")) != 1 {
+		t.Fatal("removed a notification made in another place")
+	}
+	contains(t, e.b.execute(nguild("u1", 0, "remove", num("id", id))), fmt.Sprintf("Deleted notification ID: %d", id))
+}
+
 func TestListGroupsByServer(t *testing.T) {
 	e := newEnv(t)
 	setupGuild(t, e, "a.example:27015", "b.example:27015")
@@ -1009,12 +1058,37 @@ func TestListStaysUnderDiscordsLimit(t *testing.T) {
 func TestNotifyTellsAboutUndeliverableOnce(t *testing.T) {
 	e := newEnv(t)
 	setupGuild(t, e, "a.example:27015")
-	e.b.execute(nguild("u1", 0, "status", str("value", "offline"), str("delivery", "dm")))
+	e.b.execute(nguild("u1", 0, "status", str("value", "offline")))
 	nid := ids(t, e, "u1")[0]
+	e.b.execute(nguild("u1", 0, "settings", str("id", fmt.Sprint(nid)), str("delivery", "dm")))
 	e.st.MarkUndeliverable(nid)
 	got := e.b.execute(nguild("u1", 0, "list"))
-	contains(t, got, "could not be delivered", "the server is offline")
+	contains(t, got, "could not be delivered", "refused the DM", "the server is offline", "switched them back on")
+	if strings.Contains(got, "their channel") {
+		t.Errorf("a DM notification was reported as a channel one: %q", got)
+	}
 	if got := e.b.execute(nguild("u1", 0, "list")); strings.Contains(got, "could not be delivered") {
+		t.Errorf("told twice: %q", got)
+	}
+}
+
+func TestNotifyTellsAboutARefusedChannelOnce(t *testing.T) {
+	e := newEnv(t)
+	setupGuild(t, e, "a.example:27015")
+	e.b.execute(nguild("u1", 0, "map", str("map-name", "de_dust2")))
+	in := nguild("u1", 0, "title-query", str("value", "event"))
+	in.ChannelID = "777"
+	e.b.execute(in)
+	for _, id := range ids(t, e, "u1") {
+		e.st.MarkUndeliverable(id)
+	}
+	got := e.b.execute(nguild("u1", 0, "list"))
+	contains(t, got, "could not be posted in their channel", "the map is `de_dust2`", "<#777>", "View Channel and Send Messages",
+		"/notify settings", "switched them back on")
+	if strings.Contains(got, "refused the DM") {
+		t.Errorf("a channel notification was reported as a DM: %q", got)
+	}
+	if got := e.b.execute(nguild("u1", 0, "list")); strings.Contains(got, "their channel") {
 		t.Errorf("told twice: %q", got)
 	}
 }
@@ -1278,7 +1352,7 @@ func TestAPlaceCanWatchThreeGameServers(t *testing.T) {
 	contains(t, e.b.execute(guild("admin", manage, "server", subcommand("add", str("address", "h3.example:27015")))), "Now watching")
 }
 
-func TestEveryTypeSaysItStaysQuietFor30MinutesByDefault(t *testing.T) {
+func TestEveryTypeSaysItStaysQuietFor60MinutesByDefault(t *testing.T) {
 	e := newEnv(t)
 	setupGuild(t, e, "a.example:27015")
 	for _, tc := range []struct {
@@ -1388,6 +1462,34 @@ func TestResetInADMSaysSo(t *testing.T) {
 	e.b.execute(dm("u1", "server", subcommand("add", str("address", "a.example:27015"))))
 	e.b.execute(ndm("u1", "status", str("value", "offline")))
 	contains(t, e.b.execute(ndm("u1", "reset")), "deletes all 1 of your notifications in your DMs with me")
+}
+
+func TestResetDoesNothingWhileTurnedOff(t *testing.T) {
+	e := newEnv(t)
+	setupGuild(t, e, "a.example:27015")
+	e.b.execute(nguild("u1", 0, "title-query", str("value", "event")))
+	if r := e.b.executeReply(nguild("u1", 0, "reset")); len(r.components) != 1 {
+		t.Fatalf("the question needs its buttons: %+v", r.components)
+	}
+	e.b.execute(admin("a", manage, str("active", "disabled")))
+
+	r := e.b.executeReply(nguild("u1", 0, "reset"))
+	contains(t, r.content, "turned off in this Discord server")
+	if len(r.components) != 0 {
+		t.Errorf("buttons while turned off: %+v", r.components)
+	}
+	// A button from before an admin turned sourcewatch off deletes nothing.
+	in := guild("u1", 0, "notify")
+	in.Type = discordgo.InteractionMessageComponent
+	in.Data = discordgo.MessageComponentInteractionData{CustomID: customResetConfirm}
+	got, ok := e.b.componentReply(in)
+	if !ok {
+		t.Fatal("the press was not answered")
+	}
+	contains(t, got, "turned off in this Discord server")
+	if len(ids(t, e, "u1")) != 1 {
+		t.Fatal("deleted notifications while turned off")
+	}
 }
 
 func TestButtonsAreSentWithTheReply(t *testing.T) {
@@ -1965,12 +2067,12 @@ func TestShowIsAPublicListThatMentionsNoOneAndKeepsPrivateThingsOut(t *testing.T
 	}
 	got := e.b.execute(show)
 	contains(t, got, "**Notifications of <@u1>** (2)", "**All servers**", "the map is `m`", "the server is offline")
-	if strings.Contains(got, "could not be delivered") || strings.Contains(got, "Delete one with") {
+	if strings.Contains(got, "switched them back on") || strings.Contains(got, "Delete one with") {
 		t.Errorf("a public message must not carry the owner's private notices: %q", got)
 	}
 	// The same content is what list shows to its owner, who is told about failures.
 	private := e.b.execute(list)
-	contains(t, private, "**Your notifications** (2)", "could not be delivered", "Delete one with")
+	contains(t, private, "**Your notifications** (2)", "could not be posted in their channel", "switched them back on", "Delete one with")
 	// Its reply is not ephemeral and cannot ping.
 	d := replyDataWith(got, nil, isPublic(show))
 	if d.Flags&discordgo.MessageFlagsEphemeral != 0 || len(d.AllowedMentions.Parse) != 0 || len(d.AllowedMentions.Users) != 0 {

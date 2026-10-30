@@ -60,10 +60,23 @@ func Load() (Config, error) {
 		c.Database = v
 	}
 	c.Database = chooseDatabase(c.Database)
+	c.Servers = cleanServers(c.Servers)
 	if len(c.Servers) == 0 && c.DiscordToken == "" {
 		return c, errors.New("no servers configured and no discord token")
 	}
 	return c, nil
+}
+
+// cleanServers trims each address and drops empty ones, so "a:27015, b:27015," is two servers.
+// The poller dials an address exactly as it is written.
+func cleanServers(list []string) []string {
+	var out []string
+	for _, s := range list {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // LogValue redacts secrets so a Config can be logged safely.

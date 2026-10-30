@@ -19,6 +19,7 @@ sourcewatch watches Source game servers (CS:S, CS2, TF2 and more) and tells you 
 - [Manage your notifications](#manage-your-notifications)
 - [Good to know](#good-to-know)
 - [What sourcewatch stores](#what-sourcewatch-stores)
+- [Run your own sourcewatch](#run-your-own-sourcewatch)
 
 ## Quick start
 
@@ -48,7 +49,7 @@ Only you can see the bot's replies to your commands, except `/status` and `/noti
 - **Remove:** `/server remove address:…` and pick the game server from the list that appears.
 - In a Discord server you need the **Manage Server** permission. In a DM with the bot you manage your own list.
 - Each Discord server (and each DM) can watch up to **3** game servers.
-- Private and local addresses are refused.
+- Only IPv4 game servers can be watched, and private and local addresses are refused.
 
 ## What is going on — `/status`
 
@@ -88,7 +89,7 @@ When a notification is saved, the bot replies **Notification saved as ID: 12**. 
 
 A new notification arrives in the channel where you made it (or by DM if you made it in a DM with the bot), and has a cooldown of **60 mins** after it fires. An admin can change both defaults for a Discord server (see below). Change either with `/notify settings`: `delivery` (**In this channel** or **By DM**) and `cooldown` (minutes).
 
-For DMs the bot sends you a test message first. If Discord blocks it, open a DM with the bot or allow DMs from server members, then try again.
+For DMs the bot sends you a test message first. If Discord blocks it, open a DM with the bot or allow DMs from server members, then try again. If a notification cannot be delivered later, because Discord refuses the DM or the bot can no longer post in the channel (it was deleted, or the bot lost its permissions there), it is paused, and you are told the next time you use `/notify`.
 
 ## Combine conditions with `id`
 
@@ -149,3 +150,70 @@ The default delivery and cooldown only apply to notifications made afterwards. E
 Your Discord user ID and your notification settings (delete them with `/notify remove` or `/notify reset`), each Discord server's admin settings and blacklist, and the players, maps and server names it sees on watched servers over time. That history is kept and cannot be deleted with these commands.
 
 Something not working? Ask an admin.
+
+## Run your own sourcewatch
+
+This part is for whoever runs the bot. sourcewatch is a single program for Linux. It keeps its data in one SQLite file, needs no database server, and opens no port: it only connects out, to Discord and to the game servers.
+
+### The Discord application
+
+1. In the [Discord Developer Portal](https://discord.com/developers/applications), make a **New Application**. Its **Application ID** (on **General Information**) goes in `application_id`.
+2. On **Bot**, use **Reset Token** and copy the token. It goes in `discord_token` and is a secret: anyone who has it controls the bot. sourcewatch needs none of the privileged gateway intents.
+3. Invite the bot to a Discord server with this link, after putting your application ID in it:
+   `https://discord.com/oauth2/authorize?client_id=APPLICATION_ID&scope=bot+applications.commands&permissions=3072`
+   It asks for **View Channels** and **Send Messages**, which channel notifications need. If people use `/notify` in threads, also give it **Send Messages in Threads**.
+
+The commands are registered at every start, for all Discord servers and for DMs with the bot. A new or changed command can take a moment to show up in Discord.
+
+### Install
+
+On a Debian server:
+
+1. Get the program. Either download `sourcewatch-linux-amd64` (or `-arm64`) from the [releases](../../releases) and rename it `sourcewatch`, or build it from a checkout of this repository with Go 1.26: `CGO_ENABLED=0 go build -o sourcewatch ./cmd/sourcewatch`.
+2. In a checkout of this repository, which has the example config and the service file, install the program, a user to run it as, the config and the service:
+
+<!-- install step 1 -->
+```sh
+sudo install -m 755 sourcewatch /usr/local/bin/sourcewatch
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin sourcewatch
+sudo install -d -m 750 -g sourcewatch /etc/sourcewatch
+sudo install -m 600 -o sourcewatch -g sourcewatch config.example.json /etc/sourcewatch/config.json
+sudo install -m 644 deploy/sourcewatch.service /etc/systemd/system/sourcewatch.service
+```
+
+3. Put the bot token and the application ID in the config with `sudoedit /etc/sourcewatch/config.json` (see [Configuration](#configuration)). The file must keep mode `600`, or sourcewatch refuses to start.
+4. Start it, now and at every boot:
+
+<!-- install step 2 -->
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now sourcewatch
+systemctl status sourcewatch --no-pager
+```
+
+The service runs as the `sourcewatch` user and keeps its database in `/var/lib/sourcewatch`. It starts again 5 seconds after a crash or a failed connection to Discord.
+
+### Configuration
+
+sourcewatch reads the JSON file named by `SOURCEWATCH_CONFIG`, which must have mode `600`. Then the `SOURCEWATCH_*` variables below replace what the file says. The bot token is a secret: keep it in the file (or in the environment), never in the repository.
+
+| In the file | Variable | What it is |
+|---|---|---|
+| | `SOURCEWATCH_CONFIG` | The path of the config file. Without it, only the variables are read. |
+| `discord_token` | `SOURCEWATCH_DISCORD_TOKEN` | The bot token (secret). Without one, sourcewatch only polls and stores, with no Discord bot. |
+| `application_id` | | The application ID. When empty, the bot's own user ID is used, which is normally the same. |
+| `servers` | `SOURCEWATCH_SERVERS` | Game servers to poll even when nobody in Discord watches them, as `host:port`. The variable takes them comma-separated. These are trusted, so a server on your own network works; servers added with `/server add` must have a public address. |
+| `database` | `SOURCEWATCH_DATABASE` | The SQLite file. Default: `sourcewatch.db` in the working directory, which is `/var/lib/sourcewatch` under the service. |
+| `disable_gametracker` | | `true` turns off the GameTracker fallback for servers that block queries. Default: `false`. |
+| `guild_id` | | Only to clean up after old versions, which registered the commands for one Discord server: its ID removes that copy at startup. Leave it empty otherwise. |
+| `webhook_url` | `SOURCEWATCH_WEBHOOK_URL` | Not used. The bot posts its messages itself. |
+
+sourcewatch needs at least a token or a server to start. Variables named `PAWNZ_*`, from before the project was renamed, are still read, and an existing `pawnz.db` is kept in use.
+
+### Running it
+
+- **Logs**: `journalctl -u sourcewatch -f`. Each start logs the version and the settings, with the secrets left out.
+- **Check it**: `/status` in a Discord server where the bot is, after `/server add`.
+- **Upgrade**: replace `/usr/local/bin/sourcewatch` and run `sudo systemctl restart sourcewatch`. The database is updated at startup by itself.
+- **Back up**: the database is `/var/lib/sourcewatch/sourcewatch.db`. Copy it while the service is stopped, or while it runs with `sqlite3 /var/lib/sourcewatch/sourcewatch.db ".backup /path/to/backup.db"`.
+- **Without systemd**: `SOURCEWATCH_DISCORD_TOKEN=… ./sourcewatch` works too. It stops cleanly on Ctrl+C or SIGTERM.

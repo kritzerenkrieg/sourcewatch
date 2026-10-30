@@ -43,7 +43,8 @@ func count(t *testing.T, s *Store, table string) int {
 func TestMigrationCreatesSchemaOnEmptyDatabase(t *testing.T) {
 	s, path := open(t)
 	for _, table := range []string{"server_state", "players", "sessions", "map_history", "title_history", "status_history",
-		"notifications", "conditions", "notification_state", "user_cooldowns", "listeners", "guild_settings", "guild_blacklist"} {
+		"notifications", "conditions", "notification_state", "user_cooldowns", "listeners", "guild_settings", "guild_blacklist",
+		"server_players"} {
 		if count(t, s, table) != 0 {
 			t.Errorf("%s not empty", table)
 		}
@@ -197,6 +198,97 @@ func TestOfflineClosesSessionsAndKeepsTitle(t *testing.T) {
 	}
 	if n := count(t, s, "map_history"); n != 1 {
 		t.Fatalf("map_history %d, want 1 (offline is not a map change)", n)
+	}
+}
+
+func TestAnEventHeldBackByTheUserCooldownFiresAtTheNextPoll(t *testing.T) {
+	s, _ := open(t)
+	id, _ := s.UpsertServer("a:1")
+	onMap, _ := s.AddNotification(notif("u", id, rules.Notification{Conditions: []rules.Condition{{Kind: rules.KindMap, Text: "m2"}}}))
+	full, _ := s.AddNotification(notif("u", id, rules.Notification{Conditions: []rules.Condition{{Kind: rules.KindPlayerCount, Op: ">=", N: 2}}}))
+	s.Process(id, online("T", "m1", "a"), t0)
+
+	// The map change brings players in: both fire in the same poll, and the user gets one message.
+	evs, _ := s.Process(id, online("T", "m2", "a", "b"), t0.Add(time.Minute))
+	if len(evs) != 1 || evs[0].NotificationID != onMap {
+		t.Fatalf("first poll: %+v, want only the map event", evs)
+	}
+	// The other was held back, not used up: it comes at the next poll, once.
+	evs, _ = s.Process(id, online("T", "m2", "a", "b"), t0.Add(2*time.Minute))
+	if len(evs) != 1 || evs[0].NotificationID != full {
+		t.Fatalf("next poll: %+v, want the player count event", evs)
+	}
+	if evs, _ := s.Process(id, online("T", "m2", "a", "b"), t0.Add(3*time.Minute)); len(evs) != 0 {
+		t.Fatalf("fired again: %+v", evs)
+	}
+}
+
+func TestAnAllServersEventHeldBackOnOneServerFiresAtItsNextPoll(t *testing.T) {
+	s, _ := open(t)
+	a, _, _ := s.AddListener("guild:1", "a:1", "x", t0)
+	b, _, _ := s.AddListener("guild:1", "b:2", "x", t0)
+	allServers(t, s, "u", "guild:1", rules.Condition{Kind: rules.KindMap, Text: "m2"})
+	s.Process(a.ID, online("A", "m1"), t0)
+	s.Process(b.ID, online("B", "m1"), t0)
+
+	// Both servers change map 2 s apart: the second is held back by the 5 s gap.
+	if evs, _ := s.Process(a.ID, online("A", "m2"), t0.Add(time.Minute)); len(evs) != 1 {
+		t.Fatalf("server A: %+v", evs)
+	}
+	if evs, _ := s.Process(b.ID, online("B", "m2"), t0.Add(time.Minute+2*time.Second)); len(evs) != 0 {
+		t.Fatalf("server B inside 5 s: %+v", evs)
+	}
+	// Server B's next poll delivers it.
+	evs, _ := s.Process(b.ID, online("B", "m2"), t0.Add(2*time.Minute+2*time.Second))
+	if len(evs) != 1 || evs[0].ServerID != b.ID {
+		t.Fatalf("server B next poll: %+v", evs)
+	}
+}
+
+func TestNotificationsStartOverWhenSourcewatchIsTurnedBackOn(t *testing.T) {
+	s, _ := open(t)
+	a, _, _ := s.AddListener("guild:1", "a:1", "x", t0)
+	m2 := rules.Condition{Kind: rules.KindMap, Text: "m2"}
+	s.AddNotification(rules.Notification{UserID: "u1", Scope: "guild:1", ServerID: a.ID, ChannelID: "c", Conditions: []rules.Condition{m2}})
+	allServers(t, s, "u2", "guild:1", m2)
+	s.Process(a.ID, online("A", "m1"), t0) // both armed
+
+	off, on := false, true
+	s.UpdateGuildSettings("guild:1", GuildPatch{Active: &off})
+	s.Process(a.ID, online("A", "m2"), t0.Add(time.Minute)) // skipped while off
+	s.UpdateGuildSettings("guild:1", GuildPatch{Active: &on})
+	if evs, _ := s.Process(a.ID, online("A", "m2"), t0.Add(2*time.Minute)); len(evs) != 0 {
+		t.Fatalf("fired late for what became true while off: %+v", evs)
+	}
+	s.Process(a.ID, online("A", "m1"), t0.Add(3*time.Minute))
+	if evs, _ := s.Process(a.ID, online("A", "m2"), t0.Add(4*time.Minute)); len(evs) != 2 {
+		t.Fatalf("after the condition stopped and held again: %+v, want both", evs)
+	}
+	// Turning it on when it already is changes nothing.
+	s.Process(a.ID, online("A", "m1"), t0.Add(5*time.Hour))
+	s.UpdateGuildSettings("guild:1", GuildPatch{Active: &on})
+	if evs, _ := s.Process(a.ID, online("A", "m2"), t0.Add(6*time.Hour)); len(evs) != 2 {
+		t.Fatalf("armed notifications were reset: %+v", evs)
+	}
+}
+
+func TestAnUndeliverableNotificationStartsOverWhenSwitchedBackOn(t *testing.T) {
+	s, _ := open(t)
+	id, _ := s.UpsertServer("a:1")
+	n, _ := s.AddNotification(notif("u", id, rules.Notification{Delivery: rules.DeliveryDM,
+		Conditions: []rules.Condition{{Kind: rules.KindMap, Text: "m2"}}}))
+	s.Process(id, online("T", "m1"), t0) // armed
+	s.MarkUndeliverable(n)
+	s.Process(id, online("T", "m2"), t0.Add(time.Minute)) // skipped while undeliverable
+	if ns, _ := s.TakeUndeliverable("u"); len(ns) != 1 {
+		t.Fatalf("taken %+v", ns)
+	}
+	if evs, _ := s.Process(id, online("T", "m2"), t0.Add(2*time.Minute)); len(evs) != 0 {
+		t.Fatalf("fired late for what became true while stopped: %+v", evs)
+	}
+	s.Process(id, online("T", "m1"), t0.Add(3*time.Minute))
+	if evs, _ := s.Process(id, online("T", "m2"), t0.Add(4*time.Minute)); len(evs) != 1 {
+		t.Fatalf("after the condition stopped and held again: %+v", evs)
 	}
 }
 
@@ -421,10 +513,15 @@ func TestNotificationOwnership(t *testing.T) {
 	if n, _ := s.CountUserNotifications("u1"); n != 1 {
 		t.Fatalf("count %d", n)
 	}
-	if ok, _ := s.DeleteNotification(id, "u2"); ok {
+	if ok, _ := s.DeleteNotification(id, "u2", "guild:1"); ok {
 		t.Fatal("deleted someone else's notification")
 	}
-	if ok, _ := s.DeleteNotification(id, "u1"); !ok {
+	for _, scope := range []string{"guild:2", "user:u1"} {
+		if ok, _ := s.DeleteNotification(id, "u1", scope); ok {
+			t.Fatalf("deleted from %s a notification made in guild:1", scope)
+		}
+	}
+	if ok, _ := s.DeleteNotification(id, "u1", "guild:1"); !ok {
 		t.Fatal("owner could not delete")
 	}
 }
@@ -582,7 +679,7 @@ func TestDeletingANotificationDeletesItsConditions(t *testing.T) {
 	if count(t, s, "conditions") != 2 {
 		t.Fatal("setup")
 	}
-	s.DeleteNotification(nid, "u")
+	s.DeleteNotification(nid, "u", "")
 	if n := count(t, s, "conditions"); n != 0 {
 		t.Fatalf("%d conditions left behind", n)
 	}
@@ -628,6 +725,63 @@ func TestMigrationKeepsExistingNotifications(t *testing.T) {
 	}
 	if ns[1].Phase != rules.PhaseArmed || ns[1].Delivery != "dm" {
 		t.Errorf("an armed one stays armed: %+v", ns[1])
+	}
+}
+
+func TestPlayerNamesKeepsOneRowPerPlayerAndServer(t *testing.T) {
+	s, _ := open(t)
+	a, _ := s.UpsertServer("a:1")
+	b, _ := s.UpsertServer("b:1")
+	s.Process(a, online("A", "m", "alice", "bob"), t0)
+	s.Process(a, online("A", "m", "bob"), t0.Add(time.Minute))
+	s.Process(a, online("A", "m", "alice", "bob"), t0.Add(2*time.Minute)) // alice comes back: a new session
+	s.Process(b, online("B", "m", "alice"), t0)
+	if got := count(t, s, "sessions"); got != 4 {
+		t.Fatalf("sessions %d, want 4", got)
+	}
+	if got := count(t, s, "server_players"); got != 3 {
+		t.Errorf("server_players %d, want 3: a returning player adds no row", got)
+	}
+	for id, want := range map[int64][]string{a: {"alice", "bob"}, b: {"alice"}} {
+		names, err := s.PlayerNames(id)
+		sort.Strings(names)
+		if err != nil || !reflect.DeepEqual(names, want) {
+			t.Errorf("server %d: %v %v, want %v", id, names, err, want)
+		}
+	}
+}
+
+func TestMigrationFillsServerPlayersFromSessions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(migrations) - 1 // everything up to the server_players table
+	for i := 0; i < before; i++ {
+		if _, err := db.Exec(migrations[i]); err != nil {
+			t.Fatalf("migration %d: %v", i+1, err)
+		}
+	}
+	db.Exec(fmt.Sprintf("PRAGMA user_version = %d", before))
+	db.Exec("INSERT INTO servers(id, addr) VALUES (1, 'a:1'), (2, 'b:1')")
+	db.Exec("INSERT INTO players(id, name) VALUES (1, 'alice'), (2, 'bob')")
+	db.Exec(`INSERT INTO sessions(server_id, player_id, first_seen, last_seen, open)
+		VALUES (1,1,0,0,0), (1,1,1,1,0), (1,2,0,0,1), (2,2,0,0,0)`)
+	db.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if got := count(t, s, "server_players"); got != 3 {
+		t.Errorf("server_players %d, want 3", got)
+	}
+	names, _ := s.PlayerNames(1)
+	sort.Strings(names)
+	if !reflect.DeepEqual(names, []string{"alice", "bob"}) {
+		t.Errorf("names on server 1: %v", names)
 	}
 }
 
@@ -949,7 +1103,7 @@ func TestAddingAConditionOrEnablingRestartsEveryServer(t *testing.T) {
 	if evs, _ := s.Process(a.ID, online("A", "m2", "x"), t0.Add(3*time.Hour)); len(evs) != 0 {
 		t.Fatalf("fired at once for what already held: %+v", evs)
 	}
-	if ok, _ := s.DeleteNotification(id, "u"); !ok {
+	if ok, _ := s.DeleteNotification(id, "u", "guild:1"); !ok {
 		t.Fatal("not deleted")
 	}
 	s.db.QueryRow("SELECT COUNT(*) FROM notification_state").Scan(&n)
@@ -1108,15 +1262,15 @@ func TestANewNotificationTakesTheLowestFreeID(t *testing.T) {
 		}
 	}
 	// Free the first one, and the next one uses it even though 2 to 5 are taken.
-	if ok, _ := s.DeleteNotification(1, "u"); !ok {
+	if ok, _ := s.DeleteNotification(1, "u", "guild:1"); !ok {
 		t.Fatal("not deleted")
 	}
 	if got := idOf(t, s, "u"); got != 1 {
 		t.Fatalf("after deleting 1, the next ID is %d", got)
 	}
 	// Gaps are filled from the bottom, one at a time.
-	s.DeleteNotification(2, "u")
-	s.DeleteNotification(4, "u")
+	s.DeleteNotification(2, "u", "guild:1")
+	s.DeleteNotification(4, "u", "guild:1")
 	for _, want := range []int64{2, 4, 6, 7} {
 		if got := idOf(t, s, "u"); got != want {
 			t.Fatalf("got ID %d, want %d", got, want)
@@ -1132,10 +1286,10 @@ func TestIDsAreSharedAcrossPeopleButNeverTouchSomeoneElses(t *testing.T) {
 		t.Fatalf("%d %d %d", a1, a2, b1)
 	}
 	// Bob cannot delete or change Alice's, so the free ID can only come from a deletion of its owner.
-	if ok, _ := s.DeleteNotification(a1, "bob"); ok {
+	if ok, _ := s.DeleteNotification(a1, "bob", "guild:1"); ok {
 		t.Fatal("bob deleted alice's notification")
 	}
-	s.DeleteNotification(a1, "alice")
+	s.DeleteNotification(a1, "alice", "guild:1")
 	if got := idOf(t, s, "bob"); got != 1 {
 		t.Fatalf("the freed ID goes to whoever makes the next one: got %d", got)
 	}
@@ -1191,7 +1345,7 @@ func TestADeletedNotificationLeavesNothingBehind(t *testing.T) {
 		Conditions: []rules.Condition{{Kind: rules.KindMap, Text: "m2"}, {Kind: rules.KindPlayerCount, Op: ">=", N: 1}}})
 	s.Process(a.ID, online("A", "m1", "x"), t0)
 	s.Process(a.ID, online("A", "m2", "x"), t0.Add(time.Minute))
-	s.DeleteNotification(id, "u")
+	s.DeleteNotification(id, "u", "guild:1")
 	for _, table := range []string{"notifications", "conditions", "notification_state"} {
 		if n := count(t, s, table); n != 0 {
 			t.Errorf("%s has %d rows left", table, n)

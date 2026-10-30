@@ -1,0 +1,49 @@
+# sourcewatch as a systemd service (A3). The install steps are in the README, "Run your own sourcewatch".
+[Unit]
+Description=sourcewatch, Discord alerts for Source game servers
+Documentation=https://github.com/NiDE-gg/sourcewatch
+Wants=network-online.target
+After=network-online.target
+# Never give up restarting (see Restart below).
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=sourcewatch
+Group=sourcewatch
+# The bot token is in this file, which must have mode 600 (A2).
+Environment=SOURCEWATCH_CONFIG=/etc/sourcewatch/config.json
+ExecStart=/usr/local/bin/sourcewatch
+# The database, sourcewatch.db unless the config says otherwise, lives here.
+StateDirectory=sourcewatch
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/sourcewatch
+# Start again 5 seconds after a crash, or after the connection to Discord fails.
+Restart=on-failure
+RestartSec=5s
+
+# Sandboxing. sourcewatch only connects out, to Discord and the game servers (E1), and writes
+# its database.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

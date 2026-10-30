@@ -18,7 +18,7 @@ Type `/help` for a short reminder.
 • **Remove:** `/server remove address:…` and pick the game server from the list that appears.
 • In a Discord server you need the **Manage Server** permission. In a DM with the bot you manage your own list.
 • Each Discord server (and each DM) can watch up to **3** game servers.
-• Private and local addresses are refused.
+• Only IPv4 game servers can be watched, and private and local addresses are refused.
 
 ## 📊 What is going on — `/status`
 `/status` has no options. It shows every game server you watch: online or offline, players, map, how fresh the data is, and the names of the players who are online. The reply is **public**, so everyone in the channel sees it. Players on the server's blacklist are left out.
@@ -53,7 +53,7 @@ When it is saved the bot replies **Notification saved as ID: 12**. Keep that num
 • `id` — see below
 
 ## 📬 Where it arrives, and how often
-A new notification arrives in the channel where you made it (or by DM if you made it in a DM with the bot), and has a cooldown of **60 mins** after it fires. An admin can change both defaults (see the admin message). Change either for one notification with `/notify settings`: `delivery` (**In this channel** or **By DM**) and `cooldown` (minutes). For DMs the bot sends you a test message first. If Discord blocks it, open a DM with the bot or allow DMs from server members, then try again.
+A new notification arrives in the channel where you made it (or by DM if you made it in a DM with the bot), and has a cooldown of **60 mins** after it fires. An admin can change both defaults (see the admin message). Change either for one notification with `/notify settings`: `delivery` (**In this channel** or **By DM**) and `cooldown` (minutes). For DMs the bot sends you a test message first. If Discord blocks it, open a DM with the bot or allow DMs from server members, then try again. If a notification cannot be delivered later, because Discord refuses the DM or the bot can no longer post in the channel (it was deleted, or the bot lost its permissions there), it is paused, and you are told the next time you use `/notify`.
 
 ## 🔗 Combine conditions with `id`
 Add `id:12` to any `/notify` type to put that condition into notification **12** instead of making a new one. **All** of its conditions must be true together (up to 5), and it fires once when they all become true.

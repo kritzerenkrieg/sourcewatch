@@ -1,10 +1,13 @@
 package bot
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
+
+	"github.com/kritzerenkrieg/sourcewatch/internal/poller"
 )
 
 const defaultPort = "27015"
@@ -13,9 +16,10 @@ const defaultPort = "27015"
 var lookupIP = net.LookupIP
 
 // normalizeAddr turns user input into "host:port". Anyone with Manage Server can name
-// an address the bot will send UDP packets to, so addresses that resolve to private,
-// loopback or link-local ranges are refused. That keeps the bot from probing the
-// network it runs in.
+// an address the bot will send UDP packets to, so a host that resolves to a private,
+// loopback, link-local or other non-public address is refused, as is a host with no IPv4
+// address. That keeps the bot from probing the network it runs in. The poller checks the
+// address again on every poll (poller.PublicDialer), in case the host name changes.
 func normalizeAddr(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -39,15 +43,14 @@ func normalizeAddr(raw string) (string, error) {
 	if err != nil || len(ips) == 0 {
 		return "", fmt.Errorf("I could not find `%s`", clip(host))
 	}
-	for _, ip := range ips {
-		if ip.To4() == nil {
-			continue // only IPv4 is polled
-		}
-		if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-			return "", fmt.Errorf("`%s` is not a public address", clip(host))
-		}
+	switch _, err := poller.PublicIPv4(ips); {
+	case errors.Is(err, poller.ErrNoIPv4):
+		return "", fmt.Errorf("`%s` has no IPv4 address, and only IPv4 game servers can be watched", clip(host))
+	case err != nil:
+		return "", fmt.Errorf("`%s` is not a public address", clip(host))
 	}
-	return strings.ToLower(host) + ":" + portStr, nil
+	// The port is written as a number, so 027015 and 27015 are the same game server.
+	return strings.ToLower(host) + ":" + strconv.Itoa(port), nil
 }
 
 // validHost allows letters, digits, dots and hyphens only.

@@ -180,9 +180,10 @@ func queryNotifications(tx execer, where string, args ...any) ([]rules.Notificat
 }
 
 // Process is one poll result for one server. In a single transaction it stores the
-// new state and history, evaluates the notifications that apply to the server against it,
-// saves each notification's phase, and drops events for users who were messaged less than
-// UserCooldown ago. It returns the events to deliver.
+// new state and history, evaluates the notifications that apply to the server against it, and
+// saves each notification's phase. It returns the events to deliver. An event for a user who was
+// messaged less than UserCooldown ago (C2) is held back: its notification is left as it was, so it
+// fires at the next poll if its conditions still hold (C9).
 //
 // A notification for all servers is checked once for each server it covers, with its own phase and
 // cooldown for that server. The settings of a Discord server apply: where channel delivery is off
@@ -224,6 +225,15 @@ func (s *Store) Process(serverID int64, cur rules.Snapshot, now time.Time) ([]ru
 			}
 		}
 		upd, ev := rules.Evaluate(cur, n, now)
+		if ev != nil {
+			ok, err := allowUser(tx, ev.UserID, now)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue // held back: nothing is saved, so it is still armed at the next poll (C9)
+			}
+		}
 		if upd.Phase != n.Phase || !upd.LastFired.Equal(n.LastFired) {
 			if forAll {
 				err = saveState(tx, n.ID, serverID, upd)
@@ -241,13 +251,7 @@ func (s *Store) Process(serverID int64, cur rules.Snapshot, now time.Time) ([]ru
 		if ev.Delivery == rules.DeliveryChannel && !settings[n.Scope].ChannelDelivery && strings.HasPrefix(n.Scope, "guild:") {
 			ev.Delivery = rules.DeliveryDM // an admin turned channel delivery off here
 		}
-		ok, err := allowUser(tx, ev.UserID, now)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			events = append(events, *ev)
-		}
+		events = append(events, *ev)
 	}
 	return events, tx.Commit()
 }
@@ -297,6 +301,16 @@ func resetState(tx execer, notificationID int64) error {
 	return err
 }
 
+// startOver makes the notifications matching where (columns of notifications only) start over, on
+// every server: they wait for their conditions to become true again (E14, E19).
+func startOver(tx execer, where string, args ...any) error {
+	if _, err := tx.Exec("DELETE FROM notification_state WHERE notification_id IN (SELECT id FROM notifications "+where+")", args...); err != nil {
+		return err
+	}
+	_, err := tx.Exec("UPDATE notifications SET phase = ? "+where, append([]any{int(rules.PhaseNew)}, args...)...)
+	return err
+}
+
 // allowUser reports whether a message to user may go out now, and if so records it.
 func allowUser(tx execer, user string, now time.Time) (bool, error) {
 	var last int64
@@ -312,7 +326,8 @@ func allowUser(tx execer, user string, now time.Time) (bool, error) {
 	return err == nil, err
 }
 
-// MarkUndeliverable stops delivery of a notification whose DM was refused (E7).
+// MarkUndeliverable stops delivery of a notification that Discord refused to deliver, by DM (E7) or
+// in its channel (D4).
 // Its events are skipped until TakeUndeliverable is called for its user.
 func (s *Store) MarkUndeliverable(id int64) error {
 	_, err := s.db.Exec("UPDATE notifications SET undeliverable = 1 WHERE id = ?", id)
@@ -321,7 +336,8 @@ func (s *Store) MarkUndeliverable(id int64) error {
 
 // TakeUndeliverable returns the user's undeliverable notifications so the bot can
 // tell them (E7), and re-enables delivery for them. If the DMs are still refused,
-// the next failed delivery marks them again.
+// the next failed delivery marks them again. They start over, so a condition that
+// became true while they were stopped does not fire late (E19).
 func (s *Store) TakeUndeliverable(userID string) ([]rules.Notification, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -330,6 +346,9 @@ func (s *Store) TakeUndeliverable(userID string) ([]rules.Notification, error) {
 	defer tx.Rollback()
 	ns, err := queryNotifications(tx, "WHERE user_id = ? AND undeliverable = 1", userID)
 	if err != nil {
+		return nil, err
+	}
+	if err := startOver(tx, "WHERE user_id = ? AND undeliverable = 1", userID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec("UPDATE notifications SET undeliverable = 0 WHERE user_id = ? AND undeliverable = 1", userID); err != nil {

@@ -109,20 +109,21 @@ func (s *Store) CountUserNotifications(userID string) (n int, err error) {
 	return
 }
 
-// DeleteNotification removes one of the user's notifications. false if it is not theirs.
-func (s *Store) DeleteNotification(id int64, userID string) (bool, error) {
+// DeleteNotification removes one of the user's notifications made in scope. false if there is
+// no such notification there.
+func (s *Store) DeleteNotification(id int64, userID, scope string) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec("DELETE FROM notification_state WHERE notification_id IN (SELECT id FROM notifications WHERE id = ? AND user_id = ?)", id, userID); err != nil {
+	if _, err := tx.Exec("DELETE FROM notification_state WHERE notification_id IN (SELECT id FROM notifications WHERE id = ? AND user_id = ? AND scope = ?)", id, userID, scope); err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec("DELETE FROM conditions WHERE notification_id IN (SELECT id FROM notifications WHERE id = ? AND user_id = ?)", id, userID); err != nil {
+	if _, err := tx.Exec("DELETE FROM conditions WHERE notification_id IN (SELECT id FROM notifications WHERE id = ? AND user_id = ? AND scope = ?)", id, userID, scope); err != nil {
 		return false, err
 	}
-	res, err := tx.Exec("DELETE FROM notifications WHERE id = ? AND user_id = ?", id, userID)
+	res, err := tx.Exec("DELETE FROM notifications WHERE id = ? AND user_id = ? AND scope = ?", id, userID, scope)
 	if err != nil {
 		return false, err
 	}

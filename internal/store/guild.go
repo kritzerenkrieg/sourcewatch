@@ -78,6 +78,13 @@ func (s *Store) UpdateGuildSettings(scope string, p GuildPatch) (GuildSettings, 
 		g.DefaultCooldownSec = *p.DefaultCooldownSec
 	}
 	if p.Active != nil {
+		// Turned back on, the notifications made here start over, so a condition that became
+		// true while sourcewatch was off does not fire late (E19).
+		if *p.Active && !g.Active {
+			if err := startOver(tx, "WHERE scope = ?", scope); err != nil {
+				return g, err
+			}
+		}
 		g.Active = *p.Active
 	}
 	_, err = tx.Exec(`INSERT INTO guild_settings(scope, channel_delivery, default_delivery, default_cooldown_sec, active) VALUES (?,?,?,?,?)

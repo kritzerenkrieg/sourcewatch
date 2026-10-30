@@ -48,18 +48,41 @@ func runNotify(b *Bot, in *discordgo.Interaction, list []*discordgo.ApplicationC
 	return notice + "Unknown notification type. Try `/help`."
 }
 
-// undeliverableNotice tells the user about DM notifications that failed, once (E7).
+// undeliverableNotice tells the user, once, about notifications Discord refused to deliver: by DM
+// (E7), or in their channel (D4).
 func (b *Bot) undeliverableNotice(a actor) string {
 	ns, err := b.deps.Store.TakeUndeliverable(a.UserID)
 	if err != nil || len(ns) == 0 {
 		return ""
 	}
-	var sb strings.Builder
-	sb.WriteString("**Some of your DM notifications could not be delivered** because Discord refused the DM:\n")
+	var dms, channels []rules.Notification
 	for _, n := range ns {
-		fmt.Fprintf(&sb, "- #%d %s\n", n.ID, describe(n))
+		if n.EffectiveDelivery() == rules.DeliveryDM {
+			dms = append(dms, n)
+		} else {
+			channels = append(channels, n)
+		}
 	}
-	sb.WriteString("Send me a DM first, or allow DMs from server members, and they will work again. I switched them back on.\n\n")
+	var sb strings.Builder
+	if len(dms) > 0 {
+		sb.WriteString("**Some of your DM notifications could not be delivered** because Discord refused the DM:\n")
+		for _, n := range dms {
+			fmt.Fprintf(&sb, "- #%d %s\n", n.ID, describe(n))
+		}
+		sb.WriteString("Send me a DM first, or allow DMs from server members, and they will work again.\n")
+	}
+	if len(channels) > 0 {
+		sb.WriteString("**Some of your notifications could not be posted in their channel**, because it is gone or I may not see it or post in it:\n")
+		for _, n := range channels {
+			where := ""
+			if isNumeric(n.ChannelID) {
+				where = fmt.Sprintf(", in <#%s>", n.ChannelID)
+			}
+			fmt.Fprintf(&sb, "- #%d %s%s\n", n.ID, describe(n), where)
+		}
+		sb.WriteString("Ask an admin to let me View Channel and Send Messages there, or move them with `/notify settings` and `delivery`.\n")
+	}
+	sb.WriteString("I switched them back on.\n\n")
 	return sb.String()
 }
 
@@ -397,12 +420,12 @@ func (b *Bot) notifyRemove(a actor, o opts) string {
 	if !ok {
 		return "Choose which notification to delete in the `id` option."
 	}
-	done, err := b.deps.Store.DeleteNotification(id, a.UserID)
+	done, err := b.deps.Store.DeleteNotification(id, a.UserID, a.Scope)
 	if err != nil {
 		return b.fail("remove notification", err)
 	}
 	if !done {
-		return fmt.Sprintf("You have no notification with ID %d.", id)
+		return fmt.Sprintf("You have no notification with ID %d here. See yours with `/notify list`.", id)
 	}
 	return fmt.Sprintf("✅ Deleted notification ID: %d.", id)
 }
@@ -515,7 +538,15 @@ func (b *Bot) component(r responder, in *discordgo.Interaction) {
 
 func (b *Bot) componentReply(in *discordgo.Interaction) (string, bool) {
 	a := who(in)
-	switch in.MessageComponentData().CustomID {
+	custom := in.MessageComponentData().CustomID
+	if custom != customResetConfirm && custom != customResetCancel {
+		return "", false
+	}
+	// The buttons can be older than an admin turning sourcewatch off here (E15).
+	if !b.guildSettings(a).Active {
+		return disabledMessage, true
+	}
+	switch custom {
 	case customResetConfirm:
 		n, err := b.deps.Store.DeleteAllNotifications(a.UserID, a.Scope)
 		if err != nil {

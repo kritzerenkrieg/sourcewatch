@@ -186,3 +186,80 @@ func TestManagerPollsOnlyWhileListened(t *testing.T) {
 	cancel()
 	m.Wait()
 }
+
+// firstPolls records when each server is first dialed.
+type firstPolls struct {
+	mu sync.Mutex
+	at map[string]time.Time
+}
+
+func (f *firstPolls) dial(addr string) (Client, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.at[addr]; !ok {
+		f.at[addr] = time.Now()
+	}
+	return &fake{}, nil
+}
+
+func (f *firstPolls) get(addr string) (time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.at[addr]
+	return t, ok
+}
+
+func TestWatchAllSpreadsTheFirstPollsOverTheInterval(t *testing.T) {
+	// With an hour between polls, the second and third servers wait 20 and 40 minutes.
+	f := &firstPolls{at: map[string]time.Time{}}
+	p := &Poller{Dial: f.dial, Interval: time.Hour, OnUpdate: func(Update) {}}
+	ctx, cancel := context.WithCancel(context.Background())
+	m := NewManager(ctx, p)
+	m.WatchAll([]string{"a:1", "b:2", "a:1", "c:3"})
+	waitFor(t, func() bool { _, ok := f.get("a:1"); return ok })
+	time.Sleep(50 * time.Millisecond)
+	for _, a := range []string{"b:2", "c:3"} {
+		if _, ok := f.get(a); ok {
+			t.Errorf("%s was polled at once", a)
+		}
+		if !m.Watching(a) {
+			t.Errorf("%s is not watched while it waits for its first poll", a)
+		}
+	}
+	// Listeners are counted as with Watch: a:1 was given twice.
+	m.Unwatch("a:1")
+	if !m.Watching("a:1") {
+		t.Fatal("one listener of a:1 is left")
+	}
+	m.Unwatch("a:1")
+	m.Unwatch("c:3") // stops a server still waiting for its first poll
+	if m.Watching("a:1") || m.Watching("c:3") {
+		t.Fatal("still watched after the last listener left")
+	}
+	cancel()
+	done := make(chan struct{})
+	go func() { m.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("a server waiting for its first poll did not stop")
+	}
+
+	// With a short interval the first polls come in order, a third of it apart.
+	f = &firstPolls{at: map[string]time.Time{}}
+	p = &Poller{Dial: f.dial, Interval: 600 * time.Millisecond, OnUpdate: func(Update) {}}
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	m = NewManager(ctx, p)
+	m.WatchAll([]string{"a:1", "b:2", "c:3"})
+	waitFor(t, func() bool { _, ok := f.get("c:3"); return ok })
+	ta, _ := f.get("a:1")
+	tb, _ := f.get("b:2")
+	tc, _ := f.get("c:3")
+	if gap := tb.Sub(ta); gap < 150*time.Millisecond {
+		t.Errorf("b:2 polled %v after a:1, want about 200ms", gap)
+	}
+	if gap := tc.Sub(tb); gap < 150*time.Millisecond {
+		t.Errorf("c:3 polled %v after b:2, want about 200ms", gap)
+	}
+}

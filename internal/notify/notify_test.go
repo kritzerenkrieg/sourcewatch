@@ -215,6 +215,26 @@ func TestClosedDMOnChannelCreate(t *testing.T) {
 	}
 }
 
+func TestRefusedChannelMessages(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+	}{
+		{404, `{"code":10003,"message":"Unknown Channel"}`},
+		{403, `{"code":50001,"message":"Missing Access"}`},
+		{403, `{"code":50013,"message":"Missing Permissions"}`},
+	} {
+		d, f := newNotifier(t, func(rec, int) (int, string) { return tc.status, tc.body })
+		err := d.Send(context.Background(), Target{ChannelID: "555", UserID: "123"}, "t", "m")
+		if !errors.Is(err, ErrChannelRefused) {
+			t.Errorf("%s: got %v, want ErrChannelRefused", tc.body, err)
+		}
+		if len(f.reqs) != 1 {
+			t.Errorf("%s: %d requests, want 1", tc.body, len(f.reqs))
+		}
+	}
+}
+
 func TestProbeDMSendsOneDM(t *testing.T) {
 	d, f := newNotifier(t, ok)
 	if err := d.ProbeDM(context.Background(), "123"); err != nil {
@@ -285,6 +305,22 @@ func TestDeliverMarksClosedDMsAndContinues(t *testing.T) {
 	}
 	if len(s.calls) != 3 {
 		t.Fatalf("calls %v, want all three tried", s.calls)
+	}
+}
+
+func TestDeliverMarksEveryoneInARefusedChannelMessage(t *testing.T) {
+	// 7 and 8 are the same message in the same channel, so they are one message mentioning both (E16).
+	s := &scripted{errs: map[int64]error{7: ErrChannelRefused}}
+	var m marks
+	events := []rules.Event{chEv(7, "1", "c", "t", "7"), chEv(8, "2", "c", "t", "7"), ev(3)}
+	if err := Deliver(context.Background(), s, &m, events); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual([]int64(m), []int64{7, 8}) {
+		t.Fatalf("marked %v, want [7 8]", []int64(m))
+	}
+	if len(s.calls) != 2 {
+		t.Fatalf("calls %v, want the channel message and the DM", s.calls)
 	}
 }
 

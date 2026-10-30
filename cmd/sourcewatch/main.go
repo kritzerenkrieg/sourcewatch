@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,8 +16,12 @@ import (
 	"github.com/kritzerenkrieg/sourcewatch/internal/store"
 )
 
+// version is set when a release is built: go build -ldflags "-X main.version=v1.2.3".
+var version = "dev"
+
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	log.Info("sourcewatch starting", "version", version)
 	if err := run(log); err != nil {
 		log.Error("sourcewatch stopped", "err", err)
 		os.Exit(1)
@@ -50,21 +55,22 @@ func run(log *slog.Logger) error {
 	}
 
 	p := poller.New(pipe.Handle)
+	// Servers added from Discord are checked for a public address on every poll, with their host
+	// names looked up at most every 10 minutes. The ones in the config file are the operator's own
+	// and are trusted.
+	dns := &poller.LookupCache{Lookup: net.LookupIP}
+	p.Dial = poller.PublicDialer(poller.DialA2S, dns.LookupIP, cfg.Servers)
 	if !cfg.DisableGameTracker {
 		p.Fallback = poller.NewGameTracker() // used only when A2S gets no answer (B5)
 	}
 	mgr := poller.NewManager(ctx, p)
-	for _, addr := range cfg.Servers {
-		mgr.Watch(addr)
-	}
-	// Servers people asked the bot to watch come back after a restart.
+	// Servers people asked the bot to watch come back after a restart. Their first polls, and those
+	// of the config file's servers, are spread over the first minute.
 	addrs, err := st.AllListenerAddrs()
 	if err != nil {
 		return err
 	}
-	for _, addr := range addrs {
-		mgr.Watch(addr)
-	}
+	mgr.WatchAll(append(append([]string{}, cfg.Servers...), addrs...))
 
 	var botErr error
 	if cfg.DiscordToken != "" {
