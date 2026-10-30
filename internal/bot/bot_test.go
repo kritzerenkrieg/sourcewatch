@@ -632,12 +632,13 @@ func subcommand(name string, options ...*discordgo.ApplicationCommandInteraction
 
 type opt = *discordgo.ApplicationCommandInteractionDataOption
 
+// ids is the numbers the user sees for their notifications in the test Discord server (E18).
 func ids(t *testing.T, e *env, user string) []int64 {
 	t.Helper()
 	ns, _ := e.st.UserNotifications(user, "guild:g1")
 	var out []int64
 	for _, n := range ns {
-		out = append(out, n.ID)
+		out = append(out, n.Num)
 	}
 	return out
 }
@@ -943,6 +944,44 @@ func TestIDKeepsTheGameServerAndTheSettingsOfTheNotification(t *testing.T) {
 	}
 }
 
+func TestAnIDYouDoNotHaveIsUsedForANewNotification(t *testing.T) {
+	e := newEnv(t)
+	setupGuild(t, e, "a.example:27015")
+	e.b.execute(nguild("u2", 0, "map", str("map-name", "m1")))
+	got := e.b.execute(nguild("u1", 0, "status", str("value", "online"), num("id", 5)))
+	contains(t, got, "You had no notification with ID 5, so I made a new one", "Notification saved as ID: 5")
+	if got := ids(t, e, "u1"); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("u1 has %v, want just ID 5", got)
+	}
+	// It is an ordinary notification now: the same ID adds a condition to it.
+	contains(t, e.b.execute(nguild("u1", 0, "playercount", str("value", ">=3"), num("id", 5))), "saved as ID: 5", "and")
+	// The next one without an ID takes the user's lowest free number.
+	contains(t, e.b.execute(nguild("u1", 0, "map", str("map-name", "m9"))), "saved as ID: 1")
+}
+
+func TestEachPersonNumbersTheirOwnNotifications(t *testing.T) {
+	e := newEnv(t)
+	setupGuild(t, e, "a.example:27015")
+	for i := range 3 {
+		e.b.execute(nguild("u2", 0, "map", str("map-name", fmt.Sprint("m", i))))
+	}
+	// u2 has 1, 2 and 3. u1's numbers are their own, so they also start at 1, and id:3 is free for u1.
+	contains(t, e.b.execute(nguild("u1", 0, "map", str("map-name", "x"))), "saved as ID: 1")
+	contains(t, e.b.execute(nguild("u1", 0, "map", str("map-name", "y"), num("id", 3))), "You had no notification with ID 3", "saved as ID: 3")
+	if got := ids(t, e, "u1"); !reflect.DeepEqual(got, []int64{1, 3}) {
+		t.Fatalf("u1 has %v, want [1 3]", got)
+	}
+	// Adding to u1's 3 does not touch u2's 3, and removing u1's 1 leaves u2's 1.
+	contains(t, e.b.execute(nguild("u1", 0, "player", str("username", "Al"), num("id", 3))), "saved as ID: 3", "`Al` is online")
+	contains(t, e.b.execute(nguild("u1", 0, "remove", num("id", 1))), "Deleted notification ID: 1")
+	ns, _ := e.st.UserNotifications("u2", "guild:g1")
+	if len(ns) != 3 || len(ns[2].Conditions) != 1 {
+		t.Fatalf("u2's notifications changed: %+v", ns)
+	}
+	// The same numbers in a DM are separate again.
+	contains(t, e.b.execute(ndm("u1", "map", str("map-name", "z"))), "You are not watching")
+}
+
 func TestSeveralMapsAndPlayersAreShownAsOrAndAnd(t *testing.T) {
 	e := newEnv(t)
 	setupGuild(t, e, "a.example:27015")
@@ -963,8 +1002,8 @@ func TestIDChecks(t *testing.T) {
 	e.b.execute(nguild("u2", 0, "map", str("map-name", "m1")))
 	mine, theirs := int(ids(t, e, "u1")[0]), int(ids(t, e, "u2")[0])
 
-	contains(t, e.b.execute(nguild("u1", 0, "status", str("value", "online"), num("id", theirs))), "no notification with ID")
-	contains(t, e.b.execute(nguild("u1", 0, "status", str("value", "online"), num("id", 99999))), "no notification with ID")
+	_ = theirs // numbers are per person: u2's 1 is not u1's business (E18)
+	contains(t, e.b.execute(nguild("u1", 0, "status", str("value", "online"), num("id", 0))), "a number from 1 up")
 	contains(t, e.b.execute(nguild("u1", 0, "map", str("map-name", "m1"), num("id", mine))), "already has that condition")
 	contains(t, e.b.execute(nguild("u1", 0, "map", str("map-name", ""), num("id", mine))), "`map-name`")
 	for i := 1; i < rules.MaxConditions; i++ {
@@ -1015,8 +1054,8 @@ func TestNotifyListAndRemove(t *testing.T) {
 	if strings.Contains(got, "the server is online") {
 		t.Errorf("listed another user's notification: %q", got)
 	}
-	u1, u2 := int(ids(t, e, "u1")[0]), int(ids(t, e, "u2")[0])
-	contains(t, e.b.execute(nguild("u1", 0, "remove", num("id", u2))), "no notification with ID")
+	u1 := int(ids(t, e, "u1")[0])
+	contains(t, e.b.execute(nguild("u1", 0, "remove", num("id", 7))), "no notification with ID 7")
 	contains(t, e.b.execute(guild("u1", 0, "notify", subcommand("remove"))), "`id`")
 	contains(t, e.b.execute(nguild("u1", 0, "remove", num("id", u1))), fmt.Sprintf("Deleted notification ID: %d", u1))
 	contains(t, e.b.execute(nguild("u1", 0, "list")), "no notifications")

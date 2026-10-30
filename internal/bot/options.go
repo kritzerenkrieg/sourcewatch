@@ -96,7 +96,7 @@ func createOptions(kind rules.Kind) []*discordgo.ApplicationCommandOption {
 	}
 	return []*discordgo.ApplicationCommandOption{
 		value,
-		{Type: discordgo.ApplicationCommandOptionInteger, Name: "id", Description: "Add this to an existing notification (its ID) instead of making a new one", Autocomplete: true},
+		{Type: discordgo.ApplicationCommandOptionInteger, Name: "id", Description: "Add this to one of your notifications (its ID). An ID you do not have makes a new one", MinValue: f64(1), Autocomplete: true},
 		{Type: str, Name: "server", Description: "Which game server (leave out for all of them)", Autocomplete: true},
 	}
 }

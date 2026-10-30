@@ -82,7 +82,7 @@ Each notification fires **once, when the thing becomes true**. After that it sta
 | `!=3` | anything but 3 |
 | `10` | a plain number means at least 10 |
 
-When a notification is saved, the bot replies **Notification saved as ID: 12**. Keep that number. When you delete a notification its number is free again, and the next one takes the lowest free number.
+When a notification is saved, the bot replies **Notification saved as ID: 12**. Keep that number. The numbers are your own: your notifications are numbered 1, 2, 3… separately in each Discord server and in DMs, whatever other people have. When you delete one its number is free again, and the next one takes your lowest free number.
 
 **Options (optional).** `server` limits it to one game server. If you leave it out, you get a single notification for **all servers**: one ID, listed under **All servers**, that covers every game server you watch, including ones you add later. It keeps its own state and cooldown for each game server. `id` is explained below.
 
@@ -109,6 +109,8 @@ A combined notification keeps its game server, delivery and cooldown.
 - Several **maps** are **OR**. The server being on any one of those maps is enough.
 
 So `{de_dust2 or de_inferno} AND {Alice and Bob}` fires only when the server is on one of those two maps and both Alice and Bob are online. Moving from one of the maps to another keeps it true, so it does not fire again until it has stopped being true. The other types are plain AND.
+
+If you have no notification with the `id` you give, sourcewatch makes a new one with that number instead of refusing. The reply says so.
 
 ## Manage your notifications
 

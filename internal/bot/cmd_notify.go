@@ -67,7 +67,7 @@ func (b *Bot) undeliverableNotice(a actor) string {
 	if len(dms) > 0 {
 		sb.WriteString("**Some of your DM notifications could not be delivered** because Discord refused the DM:\n")
 		for _, n := range dms {
-			fmt.Fprintf(&sb, "- #%d %s\n", n.ID, describe(n))
+			fmt.Fprintf(&sb, "- #%d %s\n", n.Num, describe(n))
 		}
 		sb.WriteString("Send me a DM first, or allow DMs from server members, and they will work again.\n")
 	}
@@ -78,7 +78,7 @@ func (b *Bot) undeliverableNotice(a actor) string {
 			if isNumeric(n.ChannelID) {
 				where = fmt.Sprintf(", in <#%s>", n.ChannelID)
 			}
-			fmt.Fprintf(&sb, "- #%d %s%s\n", n.ID, describe(n), where)
+			fmt.Fprintf(&sb, "- #%d %s%s\n", n.Num, describe(n), where)
 		}
 		sb.WriteString("Ask an admin to let me View Channel and Send Messages there, or move them with `/notify settings` and `delivery`.\n")
 	}
@@ -134,8 +134,17 @@ func (b *Bot) notifyCreate(a actor, kind rules.Kind, o opts) string {
 	if msg := b.blacklistRefusal(a, cond); msg != "" {
 		return msg
 	}
+	// IDs are the user's own numbers in this place (E18). The id of one of the user's notifications
+	// adds the condition to it, and an id the user does not have makes a new notification with it (E20).
+	var wantID int64
 	if id, ok := o.int("id"); ok {
-		return b.notifyCombine(a, id, cond, o)
+		if _, _, found := b.ownNotification(a, id); found {
+			return b.notifyCombine(a, id, cond, o)
+		}
+		if id < 1 {
+			return "A notification's ID is a number from 1 up."
+		}
+		wantID = id
 	}
 
 	servers, err := b.deps.Store.ListenerServers(a.Scope)
@@ -186,12 +195,18 @@ func (b *Bot) notifyCreate(a actor, kind rules.Kind, o opts) string {
 	if err := n.Validate(); err != nil {
 		return "That is not a valid notification: " + err.Error() + "."
 	}
-	id, err := b.deps.Store.AddNotification(n)
+	n, err = b.deps.Store.AddNotificationAt(n, wantID) // 0 takes the user's lowest free number
+	if errors.Is(err, store.ErrIDTaken) {              // made at the same moment by another command of the user
+		return fmt.Sprintf("You already have a notification with ID %d here. Try again.", wantID)
+	}
 	if err != nil {
 		return b.fail("add notification", err)
 	}
-	n.ID = id
-	return saved(n, addr, b.historyHint(hintServers, cond))
+	out := saved(n, addr, b.historyHint(hintServers, cond))
+	if wantID != 0 {
+		out = fmt.Sprintf("You had no notification with ID %d, so I made a new one with that ID.\n", wantID) + out
+	}
+	return out
 }
 
 // checkDM sends a test DM before a DM notification is made (E7). It returns a message when
@@ -222,7 +237,7 @@ func (b *Bot) notifyCombine(a actor, id int64, cond rules.Condition, o opts) str
 	var n rules.Notification
 	found := false
 	for _, m := range mine {
-		if m.ID == id {
+		if m.Num == id {
 			n, found = m, true
 		}
 	}
@@ -237,7 +252,7 @@ func (b *Bot) notifyCombine(a actor, id int64, cond rules.Condition, o opts) str
 			return fmt.Sprintf("Notification %d already has that condition.", id)
 		}
 	}
-	n, err = b.deps.Store.AddCondition(id, a.UserID, cond)
+	n, err = b.deps.Store.AddCondition(n.ID, a.UserID, cond)
 	if err != nil {
 		return b.fail("combine notification", err)
 	}
@@ -253,7 +268,7 @@ func (b *Bot) notifyCombine(a actor, id int64, cond rules.Condition, o opts) str
 
 func saved(n rules.Notification, addr, hint string) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "✅ Notification saved as ID: %d\n", n.ID)
+	fmt.Fprintf(&sb, "✅ Notification saved as ID: %d\n", n.Num)
 	where := "in this channel"
 	if n.EffectiveDelivery() == rules.DeliveryDM {
 		where = "by DM"
@@ -276,9 +291,9 @@ func saved(n rules.Notification, addr, hint string) string {
 	fmt.Fprintf(&sb, "Cooldown: %s after it fires.\n", minsText(n.EffectiveCooldown()))
 	sb.WriteString(hint)
 	if len(n.Conditions) < rules.MaxConditions {
-		fmt.Fprintf(&sb, "Add a condition with any `/notify` type and `id: %d`. Change where it arrives or its cooldown with `/notify settings id: %d`.", n.ID, n.ID)
+		fmt.Fprintf(&sb, "Add a condition with any `/notify` type and `id: %d`. Change where it arrives or its cooldown with `/notify settings id: %d`.", n.Num, n.Num)
 	} else {
-		fmt.Fprintf(&sb, "Change where it arrives or its cooldown with `/notify settings id: %d`.", n.ID)
+		fmt.Fprintf(&sb, "Change where it arrives or its cooldown with `/notify settings id: %d`.", n.Num)
 	}
 	return sb.String()
 }
@@ -390,7 +405,7 @@ fill:
 		header += "\n"
 		first := true
 		for _, n := range groups[id] {
-			line := fmt.Sprintf("`ID: %d` %s\n", n.ID, describe(n))
+			line := fmt.Sprintf("`ID: %d` %s\n", n.Num, describe(n))
 			need := len(line)
 			if first {
 				need += len(header)
@@ -420,9 +435,13 @@ func (b *Bot) notifyRemove(a actor, o opts) string {
 	if !ok {
 		return "Choose which notification to delete in the `id` option."
 	}
-	done, err := b.deps.Store.DeleteNotification(id, a.UserID, a.Scope)
-	if err != nil {
-		return b.fail("remove notification", err)
+	n, _, found := b.ownNotification(a, id)
+	done := false
+	if found {
+		var err error
+		if done, err = b.deps.Store.DeleteNotification(n.ID, a.UserID, a.Scope); err != nil {
+			return b.fail("remove notification", err)
+		}
 	}
 	if !done {
 		return fmt.Sprintf("You have no notification with ID %d here. See yours with `/notify list`.", id)
@@ -585,7 +604,7 @@ func (b *Bot) notifySettings(a actor, o opts) string {
 	if !changed {
 		return settingsText(n, addr, "**Settings of notification ID: %d**\n")
 	}
-	n, err = b.deps.Store.UpdateSettings(id, a.UserID, a.Scope, set)
+	n, err = b.deps.Store.UpdateSettings(n.ID, a.UserID, a.Scope, set)
 	if err != nil {
 		return b.fail("update settings", err)
 	}
@@ -685,7 +704,7 @@ func (b *Bot) ownNotification(a actor, id int64) (rules.Notification, string, bo
 	}
 	servers, _ := b.deps.Store.ListenerServers(a.Scope)
 	for _, n := range mine {
-		if n.ID != id {
+		if n.Num != id {
 			continue
 		}
 		for _, s := range servers {
@@ -701,7 +720,7 @@ func (b *Bot) ownNotification(a actor, id int64) (rules.Notification, string, bo
 // settingsText lists how a notification behaves. header has one %d for the ID.
 func settingsText(n rules.Notification, addr, header string) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, header, n.ID)
+	fmt.Fprintf(&sb, header, n.Num)
 	state := "enabled"
 	if n.Disabled {
 		state = "disabled (it will not fire until you enable it again)"

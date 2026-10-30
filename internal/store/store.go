@@ -142,6 +142,13 @@ INSERT OR IGNORE INTO server_players(server_id, player_id) SELECT DISTINCT serve
 `, `
 -- Whether the GameTracker fallback may be used for the game servers a Discord server watches.
 ALTER TABLE guild_settings ADD COLUMN gametracker INTEGER NOT NULL DEFAULT 1;
+`, `
+-- Each person's notifications in a place are numbered on their own (E18). The existing ones are
+-- numbered in the order they were made.
+ALTER TABLE notifications ADD COLUMN num INTEGER NOT NULL DEFAULT 0;
+UPDATE notifications SET num = (SELECT COUNT(*) FROM notifications m
+	WHERE m.user_id = notifications.user_id AND m.scope = notifications.scope AND m.id <= notifications.id);
+CREATE UNIQUE INDEX notifications_num ON notifications(user_id, scope, num);
 `}
 
 type Store struct{ db *sql.DB }

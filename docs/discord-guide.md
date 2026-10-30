@@ -45,7 +45,7 @@ The server goes `offline`, or comes back `online`.
 **`/notify title-query value:event`**
 The server name gets that word, not case-sensitive, like `[EVENT]` in the name.
 
-When it is saved the bot replies **Notification saved as ID: 12**. Keep that number. A deleted notification's number is free again, and the next one takes the lowest free number.
+When it is saved the bot replies **Notification saved as ID: 12**. Keep that number. Numbers are your own, 1, 2, 3… whatever others have. A deleted one's number is free again, and the next one takes your lowest free number.
 
 <!-- Message 4 of 7: paste as its own Discord message -->
 ## ⚙️ Options (optional)
@@ -63,7 +63,7 @@ Example:
 `/notify playercount value:>=10 id:12` → now it only fires when the map is de_dust2 **and** there are at least 10 players
 
 A combined notification keeps its game server, delivery and cooldown.
-**Players are AND:** every player you add must be online. **Maps are OR:** any one of the maps is enough. Different types are always AND, so `{map a or map b} AND {player 1 and player 2}`.
+**Players are AND:** every player you add must be online. **Maps are OR:** any one of the maps is enough. Different types are always AND, so `{map a or map b} AND {player 1 and player 2}`. If you have no notification with that `id`, a new one is made with that number.
 
 <!-- Message 5 of 7: paste as its own Discord message -->
 ## 🗂️ Manage your notifications

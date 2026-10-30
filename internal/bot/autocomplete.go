@@ -118,12 +118,12 @@ func (b *Bot) autocomplete(in *discordgo.Interaction) []*discordgo.ApplicationCo
 				add(fmt.Sprintf("all - every notification you have here (%d)", len(ns)), "all")
 			}
 			for _, n := range ns {
-				add(fmt.Sprintf("ID %d: %s", n.ID, plain(describe(n))), strconv.FormatInt(n.ID, 10))
+				add(fmt.Sprintf("ID %d: %s", n.Num, plain(describe(n))), strconv.FormatInt(n.Num, 10))
 			}
 			break
 		}
 		for _, n := range ns {
-			add(fmt.Sprintf("ID %d: %s", n.ID, plain(describe(n))), n.ID)
+			add(fmt.Sprintf("ID %d: %s", n.Num, plain(describe(n))), n.Num)
 		}
 	}
 	return out

@@ -1426,3 +1426,79 @@ func TestGameTrackerDataDoesNotCountInADiscordServerThatTurnedItOff(t *testing.T
 		t.Fatalf("events %+v, want both Discord servers' once direct answers are used", evs)
 	}
 }
+
+func TestNotificationNumbersArePerPersonAndPlace(t *testing.T) {
+	s, _ := open(t)
+	a, _, _ := s.AddListener("guild:1", "a:1", "x", t0)
+	mk := func(user, scope string, num int64) rules.Notification {
+		t.Helper()
+		n, err := s.AddNotificationAt(rules.Notification{UserID: user, Scope: scope, ServerID: a.ID, Delivery: rules.DeliveryDM,
+			Conditions: []rules.Condition{{Kind: rules.KindMap, Text: "m"}}}, num)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := mk("u1", "guild:1", 0); n.Num != 1 {
+		t.Fatalf("first num %d", n.Num)
+	}
+	if n := mk("u2", "guild:1", 0); n.Num != 1 {
+		t.Fatalf("another person starts at 1 too, got %d", n.Num)
+	}
+	if n := mk("u1", "dm:u1", 0); n.Num != 1 {
+		t.Fatalf("another place starts at 1 too, got %d", n.Num)
+	}
+	if n := mk("u1", "guild:1", 4); n.Num != 4 {
+		t.Fatalf("asked for 4, got %d", n.Num)
+	}
+	if n := mk("u1", "guild:1", 0); n.Num != 2 {
+		t.Fatalf("lowest free is 2, got %d", n.Num)
+	}
+	if _, err := s.AddNotificationAt(rules.Notification{UserID: "u1", Scope: "guild:1", ServerID: a.ID, Delivery: rules.DeliveryDM,
+		Conditions: []rules.Condition{{Kind: rules.KindMap, Text: "m"}}}, 4); !errors.Is(err, ErrIDTaken) {
+		t.Fatalf("taking u1's 4 twice: %v", err)
+	}
+}
+
+func TestMigrationNumbersExistingNotificationsPerPerson(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const before = 10 // migrations 1-10: everything up to the per-person numbers
+	for i := 0; i < before; i++ {
+		if _, err := db.Exec(migrations[i]); err != nil {
+			t.Fatalf("migration %d: %v", i+1, err)
+		}
+	}
+	db.Exec(fmt.Sprintf("PRAGMA user_version = %d", before))
+	db.Exec("INSERT INTO servers(id, addr) VALUES (1, 'a:1')")
+	for _, r := range []struct {
+		id          int
+		user, scope string
+	}{{1, "u1", "g"}, {2, "u1", "g"}, {3, "u2", "g"}, {8, "u1", "g"}, {9, "u1", "dm"}} {
+		if _, err := db.Exec(`INSERT INTO notifications(id, user_id, scope, server_id, kind, cooldown_sec, armed, phase, delivery, channel_id)
+			VALUES (?, ?, ?, 1, '', 0, 1, 0, 'dm', '')`, r.id, r.user, r.scope); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got := map[int64]int64{}
+	rows, _ := s.db.Query("SELECT id, num FROM notifications")
+	for rows.Next() {
+		var id, num int64
+		rows.Scan(&id, &num)
+		got[id] = num
+	}
+	rows.Close()
+	if want := map[int64]int64{1: 1, 2: 2, 3: 1, 8: 3, 9: 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("numbers %v, want %v", got, want)
+	}
+}

@@ -86,7 +86,10 @@ const (
 // Notification is one notification: one or more conditions that all have to hold (C4).
 // /notify makes it with one condition, and the id option adds more.
 type Notification struct {
+	// ID is the notification's number inside the bot, unique across everybody. Num is the number
+	// its owner sees and types: each person's notifications in a place are numbered 1, 2, 3... (E18).
 	ID         int64
+	Num        int64
 	UserID     string
 	Scope      string // where it was created: "guild:<id>" or "user:<id>"
 	ServerID   int64

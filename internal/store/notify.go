@@ -15,38 +15,71 @@ const UserCooldown = 5 * time.Second
 // AddNotification validates and stores n with its conditions. It starts in PhaseNew, so
 // creating it never fires it.
 func (s *Store) AddNotification(n rules.Notification) (int64, error) {
+	n, err := s.AddNotificationAt(n, 0)
+	return n.ID, err
+}
+
+// ErrIDTaken means the user already has a notification with that number in that place.
+var ErrIDTaken = errors.New("notification number is taken")
+
+// AddNotificationAt adds a notification under the number num, which the user must not have in
+// that place yet (ErrIDTaken otherwise). A num of 0 takes the user's lowest free number there.
+// It returns the notification with its ID and number.
+func (s *Store) AddNotificationAt(n rules.Notification, num int64) (rules.Notification, error) {
 	if err := n.Validate(); err != nil {
-		return 0, err
+		return n, err
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
-		return 0, err
+		return n, err
 	}
 	defer tx.Rollback()
-	// A new notification takes the lowest ID that is free, so the ID of one that was deleted is used
-	// again. (SQLite alone would only count up from the highest ID in use.)
+	if num > 0 {
+		var one int
+		switch err := tx.QueryRow("SELECT 1 FROM notifications WHERE user_id = ? AND scope = ? AND num = ?", n.UserID, n.Scope, num).Scan(&one); {
+		case err == nil:
+			return n, ErrIDTaken
+		case !errors.Is(err, sql.ErrNoRows):
+			return n, err
+		}
+	} else if num, err = lowestFreeNum(tx, n.UserID, n.Scope); err != nil {
+		return n, err
+	}
+	// The ID inside the bot is the lowest that is free too, so IDs stay small.
 	id, err := lowestFreeID(tx)
 	if err != nil {
-		return 0, err
+		return n, err
 	}
 	// Nothing should be left under a free ID. If something is, it must not attach itself to the new notification.
 	for _, q := range []string{"DELETE FROM conditions WHERE notification_id = ?", "DELETE FROM notification_state WHERE notification_id = ?"} {
 		if _, err := tx.Exec(q, id); err != nil {
-			return 0, err
+			return n, err
 		}
 	}
 	// The legacy single-condition columns still exist and are NOT NULL, so they are filled with blanks.
-	_, err = tx.Exec(`INSERT INTO notifications(id, user_id, scope, server_id, kind, cooldown_sec, armed, phase, delivery, channel_id)
-		VALUES (?,?,?,?,'',?,1,?,?,?)`, id, n.UserID, n.Scope, n.ServerID, n.CooldownSec, int(rules.PhaseNew), n.EffectiveDelivery(), n.ChannelID)
+	_, err = tx.Exec(`INSERT INTO notifications(id, num, user_id, scope, server_id, kind, cooldown_sec, armed, phase, delivery, channel_id)
+		VALUES (?,?,?,?,?,'',?,1,?,?,?)`, id, num, n.UserID, n.Scope, n.ServerID, n.CooldownSec, int(rules.PhaseNew), n.EffectiveDelivery(), n.ChannelID)
 	if err != nil {
-		return 0, err
+		return n, err
 	}
 	for _, c := range n.Conditions {
 		if err := insertCondition(tx, id, c); err != nil {
-			return 0, err
+			return n, err
 		}
 	}
-	return id, tx.Commit()
+	n.ID, n.Num = id, num
+	return n, tx.Commit()
+}
+
+// lowestFreeNum is the smallest positive number the user has no notification under in scope.
+func lowestFreeNum(tx execer, userID, scope string) (int64, error) {
+	var num int64
+	err := tx.QueryRow(`SELECT CASE
+		WHEN NOT EXISTS (SELECT 1 FROM notifications WHERE user_id = ?1 AND scope = ?2 AND num = 1) THEN 1
+		ELSE (SELECT MIN(n.num + 1) FROM notifications n WHERE n.user_id = ?1 AND n.scope = ?2
+			AND NOT EXISTS (SELECT 1 FROM notifications m WHERE m.user_id = ?1 AND m.scope = ?2 AND m.num = n.num + 1))
+	END`, userID, scope).Scan(&num)
+	return num, err
 }
 
 // lowestFreeID is the smallest positive ID no notification has. Writes go through one connection, one
@@ -106,7 +139,7 @@ func (s *Store) AddCondition(id int64, userID string, c rules.Condition) (rules.
 	return n, tx.Commit()
 }
 
-const notificationCols = `id, user_id, scope, server_id, cooldown_sec, phase, last_fired, delivery, channel_id, undeliverable, disabled`
+const notificationCols = `id, num, user_id, scope, server_id, cooldown_sec, phase, last_fired, delivery, channel_id, undeliverable, disabled`
 
 // notifications returns the notifications to check for a server: those made for it, and those made
 // for all servers by a place that watches it. Disabled ones, ones stopped because their DM was
@@ -120,7 +153,7 @@ func notifications(tx execer, serverID int64) ([]rules.Notification, error) {
 // queryNotifications returns the notifications matching where (columns of notifications
 // only), each with its conditions.
 func queryNotifications(tx execer, where string, args ...any) ([]rules.Notification, error) {
-	rows, err := tx.Query("SELECT "+notificationCols+" FROM notifications "+where+" ORDER BY id", args...)
+	rows, err := tx.Query("SELECT "+notificationCols+" FROM notifications "+where+" ORDER BY num, id", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +167,7 @@ func queryNotifications(tx execer, where string, args ...any) ([]rules.Notificat
 			disabled      int
 			last          int64
 		)
-		if err := rows.Scan(&n.ID, &n.UserID, &n.Scope, &n.ServerID, &n.CooldownSec, &phase, &last,
+		if err := rows.Scan(&n.ID, &n.Num, &n.UserID, &n.Scope, &n.ServerID, &n.CooldownSec, &phase, &last,
 			&n.Delivery, &n.ChannelID, &undeliverable, &disabled); err != nil {
 			rows.Close()
 			return nil, err
