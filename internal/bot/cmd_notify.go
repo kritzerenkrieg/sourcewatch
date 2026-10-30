@@ -382,9 +382,9 @@ fill:
 		case id == rules.AllServers:
 			header = fmt.Sprintf("**All servers** (%d)", len(servers))
 		case ref.Addr != "":
-			header = code(ref.Addr)
+			header = "**Server:** " + code(ref.Addr)
 			if st, _, err := b.deps.Store.ServerState(ref.ID); err == nil && st != nil {
-				header = label(st.Title, ref.Addr)
+				header = "**Server:** " + label(st.Title, ref.Addr)
 			}
 		}
 		header += "\n"

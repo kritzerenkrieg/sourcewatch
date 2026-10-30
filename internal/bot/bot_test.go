@@ -2037,7 +2037,7 @@ func TestListShowsAllServersFirstAndOnce(t *testing.T) {
 	e.b.execute(nguild("u1", 0, "status", str("value", "offline")))
 	e.b.execute(nguild("u1", 0, "title-query", str("value", "event")))
 	got := e.b.execute(nguild("u1", 0, "list"))
-	contains(t, got, "**Your notifications** (3)", "**All servers** (2)", "`b.example:27015`")
+	contains(t, got, "**Your notifications** (3)", "**All servers** (2)", "**Server:** `b.example:27015`")
 	if strings.Count(got, "All servers") != 1 {
 		t.Errorf("the heading appears once: %q", got)
 	}
