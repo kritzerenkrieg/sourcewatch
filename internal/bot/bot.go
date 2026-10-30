@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ func registry() []botCmd {
 		{name: "status", description: "Show what your game servers are doing and who is online, to everyone here", public: true, run: runStatus},
 		{name: "admin", description: "Settings for this Discord server (needs Manage Server)", options: adminOptions(), run: runAdmin},
 		{name: "help", description: "How to use sourcewatch", run: runHelp},
+		{name: "version", description: "Show which version of sourcewatch is running", run: runVersion},
 	}
 }
 
@@ -51,6 +53,8 @@ type Deps struct {
 	Store   *store.Store
 	Watcher Watcher
 	DM      DMProber
+	// Version is the build of the bot, set when a release is built. Empty means a plain build.
+	Version string
 }
 
 type Bot struct {
@@ -295,6 +299,15 @@ func runHelp(_ *Bot, _ *discordgo.Interaction, _ []*discordgo.ApplicationCommand
 	}
 	sb.WriteString("\nNotifications arrive in the channel where you made them, or by DM if you choose that.")
 	return sb.String()
+}
+
+// runVersion is /version: the build of the bot that is running.
+func runVersion(b *Bot, _ *discordgo.Interaction, _ []*discordgo.ApplicationCommandInteractionDataOption) string {
+	v := b.deps.Version
+	if v == "" {
+		v = "dev"
+	}
+	return fmt.Sprintf("**sourcewatch** `%s` (%s)", v, runtime.Version())
 }
 
 // visibility is the message flags every reply has: link previews are off, and unless the command

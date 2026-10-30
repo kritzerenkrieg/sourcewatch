@@ -492,7 +492,7 @@ func TestCommandsAreRegisteredGloballyAndOldGuildCopyRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%d %v", n, err)
 	}
-	if n != 5 || len(f.calls) != 2 || f.calls[0] != (regCall{"", 5}) || f.calls[1] != (regCall{"456", 0}) {
+	if n != 6 || len(f.calls) != 2 || f.calls[0] != (regCall{"", 6}) || f.calls[1] != (regCall{"456", 0}) {
 		t.Fatalf("calls %+v: want one global registration of all commands, then the old server-only copy emptied", f.calls)
 	}
 	f = &fakeRegistrar{}
@@ -647,7 +647,7 @@ func TestCommandsAreTopLevelWithNotifyHoldingTheNotificationCommands(t *testing.
 	for _, c := range commands() {
 		names = append(names, c.Name)
 	}
-	if want := []string{"server", "notify", "status", "admin", "help"}; !reflect.DeepEqual(names, want) {
+	if want := []string{"server", "notify", "status", "admin", "help", "version"}; !reflect.DeepEqual(names, want) {
 		t.Fatalf("commands %v, want %v", names, want)
 	}
 	notify, _ := find("notify")
@@ -705,6 +705,13 @@ func TestCommandsMeetDiscordLimits(t *testing.T) {
 		seen[c.Name] = true
 		check("/"+c.Name, c.Options)
 	}
+}
+
+func TestVersionShowsTheBuildOrDev(t *testing.T) {
+	e := newEnv(t)
+	contains(t, e.b.execute(dm("u1", "version")), "`dev`", "go")
+	e.b.deps.Version = "v1.2.3"
+	contains(t, e.b.execute(dm("u1", "version")), "`v1.2.3`")
 }
 
 func TestHelpHasQuickStartAndStaysShort(t *testing.T) {

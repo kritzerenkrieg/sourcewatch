@@ -42,6 +42,7 @@ Only you can see the bot's replies to your commands, except `/status` and `/noti
 | `/notify reset` | Delete all your notifications here (it asks first) |
 | `/admin settings` | For admins: channel delivery, default delivery, default cooldown, switching the bot off, and a player blacklist (needs **Manage Server**) |
 | `/help` | A short reminder of all this |
+| `/version` | Which version of sourcewatch is running |
 
 ## Game servers — `/server`
 

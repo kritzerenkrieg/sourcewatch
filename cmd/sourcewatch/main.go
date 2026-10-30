@@ -74,7 +74,7 @@ func run(log *slog.Logger) error {
 
 	var botErr error
 	if cfg.DiscordToken != "" {
-		b, err := bot.New(cfg.DiscordToken, cfg.ApplicationID, cfg.GuildID, log, bot.Deps{Store: st, Watcher: mgr, DM: discord})
+		b, err := bot.New(cfg.DiscordToken, cfg.ApplicationID, cfg.GuildID, log, bot.Deps{Store: st, Watcher: mgr, DM: discord, Version: version})
 		if err != nil {
 			return err
 		}
