@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"math"
 	"net"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/rumblefrog/go-a2s"
 )
 
 var header = []byte{0xFF, 0xFF, 0xFF, 0xFF}
@@ -91,7 +92,7 @@ func fakeServer(t *testing.T, info, players []byte) (addr string, queries *atomi
 
 func dial(t *testing.T, addr string) Client {
 	t.Helper()
-	c, err := a2s.NewClient(addr, a2s.TimeoutOption(150*time.Millisecond))
+	c, err := dialA2S(addr, 150*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,18 +141,18 @@ type fake struct {
 	infoErrs int // number of QueryInfo calls that fail first
 	calls    atomic.Int32
 	players  atomic.Int32
-	info     a2s.ServerInfo
+	info     Info
 }
 
-func (f *fake) QueryInfo() (*a2s.ServerInfo, error) {
+func (f *fake) QueryInfo() (*Info, error) {
 	if int(f.calls.Add(1)) <= f.infoErrs {
 		return nil, context.DeadlineExceeded
 	}
 	return &f.info, nil
 }
-func (f *fake) QueryPlayer() (*a2s.PlayerInfo, error) {
+func (f *fake) QueryPlayer() (*PlayerList, error) {
 	f.players.Add(1)
-	return &a2s.PlayerInfo{}, nil
+	return &PlayerList{}, nil
 }
 func (f *fake) Close() error { return nil }
 
@@ -191,5 +192,121 @@ func TestQueryContextCancel(t *testing.T) {
 	f := &fake{}
 	if _, err := Query(ctx, f); err == nil || f.calls.Load() != 0 {
 		t.Fatalf("want immediate cancel, err=%v calls=%d", err, f.calls.Load())
+	}
+}
+
+// stubbornServer answers every request with a new challenge extra times before the real reply,
+// like a server behind an anti-DDoS filter (B8). Replies of more than splitAt bytes are split.
+func stubbornServer(t *testing.T, extra int, info, players []byte, splitAt int) string {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pc.Close() })
+	go func() {
+		buf := make([]byte, 1400)
+		seen := map[byte]int{}
+		for {
+			_, from, err := pc.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			kind := buf[4]
+			seen[kind]++
+			if seen[kind] <= 1+extra { // the plain request and the extra rounds get a fresh challenge
+				pc.WriteTo(append(append([]byte{}, header...), 0x41, byte(seen[kind]), 2, 3, 4), from)
+				continue
+			}
+			reply := info
+			if kind == 0x55 {
+				reply = players
+			}
+			if splitAt <= 0 || len(reply) <= splitAt {
+				pc.WriteTo(reply, from)
+				continue
+			}
+			var parts [][]byte
+			for b := reply; len(b) > 0; {
+				k := min(splitAt, len(b))
+				parts = append(parts, b[:k])
+				b = b[k:]
+			}
+			for i := len(parts) - 1; i >= 0; i-- { // out of order on purpose
+				var p bytes.Buffer
+				binary.Write(&p, binary.LittleEndian, int32(-2))
+				binary.Write(&p, binary.LittleEndian, int32(77))
+				p.Write([]byte{byte(len(parts)), byte(i)})
+				binary.Write(&p, binary.LittleEndian, uint16(1248))
+				p.Write(parts[i])
+				pc.WriteTo(p.Bytes(), from)
+			}
+		}
+	}()
+	return pc.LocalAddr().String()
+}
+
+func TestQueryAnswersSeveralChallengesInARow(t *testing.T) {
+	addr := stubbornServer(t, 3, infoReply(2, 0), playerReply("alice", "bob"), 0)
+	c, err := dialA2S(addr, 150*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	st, err := Query(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Name != "Test Server" || st.Players != 2 || len(st.PlayerNames) != 2 || !st.NamesKnown {
+		t.Fatalf("state %+v", st)
+	}
+}
+
+func TestQueryGivesUpAfterTooManyChallenges(t *testing.T) {
+	addr := stubbornServer(t, 100, infoReply(0, 0), nil, 0)
+	c, err := dialA2S(addr, 150*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := c.QueryInfo(); !errors.Is(err, ErrTooManyChallenges) {
+		t.Fatalf("err %v, want ErrTooManyChallenges", err)
+	}
+}
+
+func TestQueryJoinsASplitPlayerList(t *testing.T) {
+	var names []string
+	for i := range 64 {
+		names = append(names, fmt.Sprintf("player-with-a-long-name-%02d", i))
+	}
+	addr := stubbornServer(t, 1, infoReply(64, 0), playerReply(names...), 500)
+	c, err := dialA2S(addr, 150*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	pl, err := c.QueryPlayer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(pl.Names, names) {
+		t.Fatalf("got %d names, first %q", len(pl.Names), pl.Names[:min(3, len(pl.Names))])
+	}
+}
+
+func TestParseRefusesTruncatedReplies(t *testing.T) {
+	full := infoReply(3, 1)[5:]                                                         // after the header and type byte
+	need := 1 + len("Test Server\x00de_dust2\x00cstrike\x00Counter-Strike\x00") + 2 + 3 // up to the bot count
+	for i := range need {
+		if _, err := parseInfo(full[:i]); err == nil {
+			t.Fatalf("parseInfo accepted %d of the %d bytes it needs", i, need)
+		}
+	}
+	if in, err := parseInfo(full[:need]); err != nil || in.Players != 3 || in.Bots != 1 {
+		t.Fatalf("parseInfo(%d bytes) = %+v, %v", need, in, err)
+	}
+	pl := playerReply("alice", "bob")[5:]
+	if _, err := parsePlayers(pl[:len(pl)-3]); err == nil {
+		t.Fatal("parsePlayers accepted a cut reply")
 	}
 }

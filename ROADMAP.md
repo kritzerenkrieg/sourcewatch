@@ -30,7 +30,7 @@ Keep the diagram in sync with the phase headings below: one node per phase, in o
 **Exit:** run against a real Source server, it logs players, map and online/offline transitions.
 **Out of scope:** persistence, notifications.
 
-- [x] A2S client on `net` UDP: `A2S_INFO`, `A2S_PLAYER`, challenge handshake (B1, B2). Done when: unit tests against a fake UDP server cover the handshake, a valid reply and a malformed reply.
+- [x] A2S client on `net` UDP: `A2S_INFO`, `A2S_PLAYER`, challenge handshake (B1, B2, B8). Done when: unit tests against a fake UDP server cover the handshake, several challenges in a row, too many challenges, a split reply, a valid reply and a malformed reply.
 - [x] 2 s timeout, 2 retries, offline after 3 failed cycles (B1). Done when: tests cover timeout, retry and the offline transition.
 - [x] One goroutine per server, 60 s ticker with jitter (B3). Done when: a test shows intervals fall within 60 s ±5 s and that cancelling the context stops all goroutines.
 - [x] `A2S_PLAYER` only when players > 0, bots filtered from counts (B1, B4). Done when: a test shows no player query for an empty server and bots excluded from the count.

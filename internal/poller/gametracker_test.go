@@ -13,8 +13,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/rumblefrog/go-a2s"
 )
 
 const gtAddr = "46.105.73.18:27015"
@@ -385,7 +383,7 @@ func TestA2SRecoveryStopsUsingFallback(t *testing.T) {
 	p := fallbackPoller(&col, fb, clk)
 	p.Dial = func(string) (Client, error) {
 		if up.Load() {
-			return &fake{info: a2s.ServerInfo{Name: "Real", Map: "m", Players: 1, MaxPlayers: 8}}, nil
+			return &fake{info: Info{Name: "Real", Map: "m", Players: 1, MaxPlayers: 8}}, nil
 		}
 		return nil, errors.New("timeout")
 	}

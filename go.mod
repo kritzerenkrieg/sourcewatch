@@ -4,7 +4,6 @@ go 1.26.0
 
 require (
 	github.com/bwmarrin/discordgo v0.29.0
-	github.com/rumblefrog/go-a2s v1.0.3
 	modernc.org/sqlite v1.61.0
 )
 

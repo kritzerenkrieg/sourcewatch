@@ -7,8 +7,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/rumblefrog/go-a2s"
 )
 
 func TestDelayWithinJitter(t *testing.T) {
@@ -63,7 +61,7 @@ func TestRunPollsBothServersAndStops(t *testing.T) {
 	var col collector
 	p := &Poller{
 		Dial: func(addr string) (Client, error) {
-			return &fake{info: a2s.ServerInfo{Name: addr, Map: "m", MaxPlayers: 8}}, nil
+			return &fake{info: Info{Name: addr, Map: "m", MaxPlayers: 8}}, nil
 		},
 		Interval: 10 * time.Millisecond, Jitter: 2 * time.Millisecond, OnUpdate: col.add,
 	}

@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	"github.com/rumblefrog/go-a2s"
 )
 
 const (
@@ -14,19 +12,19 @@ const (
 	Retries = 2
 )
 
-// Client is the subset of *a2s.Client the poller uses.
+// Client queries one game server. The production one is our own A2S client (B8).
 type Client interface {
-	QueryInfo() (*a2s.ServerInfo, error)
-	QueryPlayer() (*a2s.PlayerInfo, error)
+	QueryInfo() (*Info, error)
+	QueryPlayer() (*PlayerList, error)
 	Close() error
 }
 
 // Dialer opens a client for one query cycle.
 type Dialer func(addr string) (Client, error)
 
-// DialA2S is the production Dialer. go-a2s has no context or retries, so Query adds them.
+// DialA2S is the production Dialer. The client has no context or retries, so Query adds them.
 func DialA2S(addr string) (Client, error) {
-	c, err := a2s.NewClient(addr, a2s.TimeoutOption(Timeout))
+	c, err := dialA2S(addr, Timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -64,9 +62,7 @@ func Query(ctx context.Context, c Client) (State, error) {
 		st.NamesKnown = false
 		return st, nil
 	}
-	for _, p := range pi.Players {
-		st.PlayerNames = append(st.PlayerNames, p.Name)
-	}
+	st.PlayerNames = append(st.PlayerNames, pi.Names...)
 	return st, nil
 }
 
@@ -82,7 +78,7 @@ func retry[T any](ctx context.Context, f func() (T, error)) (v T, err error) {
 	return v, err
 }
 
-// safe turns a panic from go-a2s on a truncated reply into an error.
+// safe turns a panic in a client into an error, so one bad reply cannot stop the poller.
 func safe[T any](f func() (T, error)) (v T, err error) {
 	defer func() {
 		if r := recover(); r != nil {
