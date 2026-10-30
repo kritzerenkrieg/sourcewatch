@@ -324,13 +324,13 @@ func (b *Bot) historyHint(serverIDs []int64, c rules.Condition) string {
 			return ""
 		}
 		for _, n := range names {
-			if !seen[strings.ToLower(n)] {
-				seen[strings.ToLower(n)] = true
+			if key := strings.ToLower(strings.TrimSpace(n)); !seen[key] { // spaces around a name do not count
+				seen[key] = true
 				known = append(known, n)
 			}
 		}
 	}
-	if len(known) == 0 || seen[strings.ToLower(c.Text)] {
+	if len(known) == 0 || seen[strings.ToLower(strings.TrimSpace(c.Text))] {
 		return ""
 	}
 	msg := fmt.Sprintf("I have not seen %s %s on this server yet.", c.Kind, code(c.Text))

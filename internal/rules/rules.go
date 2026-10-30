@@ -438,9 +438,12 @@ func containsFold(s, sub string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }
 
+// hasName reports whether want is one of names: not case-sensitive, and ignoring spaces around a
+// name, since some players have them in their in-game name (" SerbianEagle ").
 func hasName(names []string, want string) bool {
+	want = strings.TrimSpace(want)
 	for _, n := range names {
-		if strings.EqualFold(n, want) {
+		if strings.EqualFold(strings.TrimSpace(n), want) {
 			return true
 		}
 	}

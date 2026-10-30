@@ -502,3 +502,17 @@ func TestSeveralMapsOnlyAreAnnouncedAsAMapChange(t *testing.T) {
 		t.Fatalf("event %+v, want a map change to de_b", ev)
 	}
 }
+
+func TestPlayerNamesMatchIgnoringSpacesAround(t *testing.T) {
+	n := quick(notif(hasPlayer("Kritz"), hasPlayer("SerbianEagle")))
+	fired, _ := run(n, snap("T", "m", 1, "Kritz"), snap("T", "m", 2, "Kritz", " SerbianEagle "))
+	if !reflect.DeepEqual(fired, []int{1}) {
+		t.Fatalf("fired at %v, want [1]", fired)
+	}
+	if !hasName([]string{"bob"}, "  BOB ") {
+		t.Error("spaces typed around the name are ignored too")
+	}
+	if hasName([]string{"bo b"}, "bob") {
+		t.Error("spaces inside a name still count")
+	}
+}
