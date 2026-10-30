@@ -757,7 +757,7 @@ func TestMigrationFillsServerPlayersFromSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := len(migrations) - 1 // everything up to the server_players table
+	const before = 8 // migrations 1-8: everything up to the server_players table
 	for i := 0; i < before; i++ {
 		if _, err := db.Exec(migrations[i]); err != nil {
 			t.Fatalf("migration %d: %v", i+1, err)
@@ -1359,5 +1359,70 @@ func TestADeletedNotificationLeavesNothingBehind(t *testing.T) {
 	}
 	if evs, _ := s.Process(a.ID, online("A", "m2", "x"), t0.Add(2*time.Hour)); len(evs) != 0 {
 		t.Fatalf("the reused ID inherited the old state and fired: %+v", evs)
+	}
+}
+
+func TestGameTrackerIsAllowedUnlessEveryPlaceWatchingTheServerTurnedItOff(t *testing.T) {
+	s, _ := open(t)
+	allowed := func(addr string) bool {
+		ok, err := s.GameTrackerAllowed(addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if !allowed("nobody:1") {
+		t.Error("a server nobody watches (the config's) may use it")
+	}
+	s.AddListener("guild:1", "a:1", "x", t0)
+	if !allowed("a:1") {
+		t.Error("allowed by default")
+	}
+	s.UpdateGuildSettings("guild:1", GuildPatch{GameTracker: ptr(false)})
+	if allowed("a:1") {
+		t.Error("the only place watching it turned it off")
+	}
+	s.AddListener("guild:2", "a:1", "y", t0) // never set anything, so it is on
+	if !allowed("a:1") {
+		t.Error("another place watching it still wants it")
+	}
+	s.UpdateGuildSettings("guild:2", GuildPatch{GameTracker: ptr(false)})
+	s.AddListener("dm:u", "a:1", "u", t0) // a DM has no settings, so it is on
+	if !allowed("a:1") {
+		t.Error("a DM watching it still wants it")
+	}
+}
+
+func TestGameTrackerDataDoesNotCountInADiscordServerThatTurnedItOff(t *testing.T) {
+	s, _ := open(t)
+	a, _, _ := s.AddListener("guild:1", "a:1", "x", t0)
+	s.AddListener("guild:2", "a:1", "y", t0)
+	for _, scope := range []string{"guild:1", "guild:2"} {
+		s.AddNotification(rules.Notification{UserID: scope, Scope: scope, ServerID: a.ID, ChannelID: "c", CooldownSec: 1,
+			Conditions: []rules.Condition{{Kind: rules.KindMap, Text: "m2"}}})
+	}
+	s.UpdateGuildSettings("guild:1", GuildPatch{GameTracker: ptr(false)})
+	viaGT := func(mp string) rules.Snapshot {
+		sn := online("T", mp)
+		sn.Source = "gametracker"
+		return sn
+	}
+	if _, err := s.Process(a.ID, viaGT("m1"), t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := s.Process(a.ID, viaGT("m2"), t0.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].UserID != "guild:2" {
+		t.Fatalf("events %+v, want only guild:2's", evs)
+	}
+	// A direct answer counts everywhere.
+	if _, err := s.Process(a.ID, online("T", "m1"), t0.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	evs, _ = s.Process(a.ID, online("T", "m2"), t0.Add(4*time.Minute))
+	if len(evs) != 2 {
+		t.Fatalf("events %+v, want both Discord servers' once direct answers are used", evs)
 	}
 }

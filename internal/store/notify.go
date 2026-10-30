@@ -218,6 +218,9 @@ func (s *Store) Process(serverID int64, cur rules.Snapshot, now time.Time) ([]ru
 		if tracksBlacklisted(n, blacklists[n.Scope]) {
 			continue
 		}
+		if cur.Source == "gametracker" && !settings[n.Scope].GameTracker {
+			continue // this Discord server only counts direct answers (E22): nothing changes for it
+		}
 		forAll := n.ServerID == rules.AllServers
 		if forAll { // its phase and last firing for this server
 			if n.Phase, n.LastFired, err = loadState(tx, n.ID, serverID); err != nil {

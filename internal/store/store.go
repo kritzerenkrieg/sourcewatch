@@ -139,6 +139,9 @@ CREATE TABLE server_players (
 	PRIMARY KEY (server_id, player_id)
 ) WITHOUT ROWID;
 INSERT OR IGNORE INTO server_players(server_id, player_id) SELECT DISTINCT server_id, player_id FROM sessions;
+`, `
+-- Whether the GameTracker fallback may be used for the game servers a Discord server watches.
+ALTER TABLE guild_settings ADD COLUMN gametracker INTEGER NOT NULL DEFAULT 1;
 `}
 
 type Store struct{ db *sql.DB }

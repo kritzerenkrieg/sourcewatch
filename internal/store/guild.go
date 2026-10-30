@@ -19,24 +19,27 @@ type GuildSettings struct {
 	DefaultCooldownSec int
 	// Active is false when sourcewatch is turned off in the whole Discord server.
 	Active bool
+	// GameTracker is false when the GameTracker fallback may not be used for the game servers this
+	// Discord server watches: only direct queries count here (E22).
+	GameTracker bool
 }
 
 func defaultGuildSettings() GuildSettings {
-	return GuildSettings{ChannelDelivery: true, DefaultDelivery: "channel", Active: true}
+	return GuildSettings{ChannelDelivery: true, DefaultDelivery: "channel", Active: true, GameTracker: true}
 }
 
 func guildSettings(q execer, scope string) (GuildSettings, error) {
 	g := defaultGuildSettings()
-	var ch, active int
-	err := q.QueryRow(`SELECT channel_delivery, default_delivery, default_cooldown_sec, active FROM guild_settings WHERE scope = ?`, scope).
-		Scan(&ch, &g.DefaultDelivery, &g.DefaultCooldownSec, &active)
+	var ch, active, gt int
+	err := q.QueryRow(`SELECT channel_delivery, default_delivery, default_cooldown_sec, active, gametracker FROM guild_settings WHERE scope = ?`, scope).
+		Scan(&ch, &g.DefaultDelivery, &g.DefaultCooldownSec, &active, &gt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return g, nil
 	}
 	if err != nil {
 		return g, err
 	}
-	g.ChannelDelivery, g.Active = ch == 1, active == 1
+	g.ChannelDelivery, g.Active, g.GameTracker = ch == 1, active == 1, gt == 1
 	return g, nil
 }
 
@@ -49,6 +52,7 @@ type GuildPatch struct {
 	DefaultDelivery    *string
 	DefaultCooldownSec *int
 	Active             *bool
+	GameTracker        *bool
 }
 
 // UpdateGuildSettings applies the patch and returns the settings as they are now.
@@ -87,10 +91,13 @@ func (s *Store) UpdateGuildSettings(scope string, p GuildPatch) (GuildSettings, 
 		}
 		g.Active = *p.Active
 	}
-	_, err = tx.Exec(`INSERT INTO guild_settings(scope, channel_delivery, default_delivery, default_cooldown_sec, active) VALUES (?,?,?,?,?)
+	if p.GameTracker != nil {
+		g.GameTracker = *p.GameTracker
+	}
+	_, err = tx.Exec(`INSERT INTO guild_settings(scope, channel_delivery, default_delivery, default_cooldown_sec, active, gametracker) VALUES (?,?,?,?,?,?)
 		ON CONFLICT(scope) DO UPDATE SET channel_delivery=excluded.channel_delivery, default_delivery=excluded.default_delivery,
-			default_cooldown_sec=excluded.default_cooldown_sec, active=excluded.active`,
-		scope, b2i(g.ChannelDelivery), g.DefaultDelivery, g.DefaultCooldownSec, b2i(g.Active))
+			default_cooldown_sec=excluded.default_cooldown_sec, active=excluded.active, gametracker=excluded.gametracker`,
+		scope, b2i(g.ChannelDelivery), g.DefaultDelivery, g.DefaultCooldownSec, b2i(g.Active), b2i(g.GameTracker))
 	if err != nil {
 		return g, err
 	}
@@ -162,4 +169,15 @@ func (s *Store) RemoveBlacklist(scope, name string) (removed bool, err error) {
 	}
 	n, _ := res.RowsAffected()
 	return n == 1, nil
+}
+
+// GameTrackerAllowed reports whether the GameTracker fallback may be used for a game server: unless
+// every place that watches it has turned the fallback off. A server nobody watches, one that is only
+// in the config, may use it.
+func (s *Store) GameTrackerAllowed(addr string) (bool, error) {
+	var total, allowing int
+	err := s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(COALESCE(g.gametracker, 1)), 0)
+		FROM listeners l JOIN servers v ON v.id = l.server_id LEFT JOIN guild_settings g ON g.scope = l.scope
+		WHERE v.addr = ?`, addr).Scan(&total, &allowing)
+	return total == 0 || allowing > 0, err
 }

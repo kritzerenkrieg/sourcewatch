@@ -421,3 +421,31 @@ func TestNoFallbackBehavesAsBefore(t *testing.T) {
 		return false
 	})
 }
+
+func TestFallbackIsNotUsedWhenItIsTurnedOffForTheServer(t *testing.T) {
+	var col collector
+	clk := &clock{t: gtNow}
+	fb := &fakeFallback{}
+	fb.set(alive("Zombie", gtNow.Add(-time.Minute), time.Minute, "alice"), nil)
+	p := fallbackPoller(&col, fb, clk)
+	p.UseFallback = func(addr string) bool { return addr != "a:1" }
+	defer run(t, p)()
+
+	// The server keeps being tried directly, and is declared offline after three failures.
+	waitFor(t, func() bool {
+		for _, u := range col.get("a:1") {
+			if u.Transition && !u.Online {
+				return true
+			}
+		}
+		return false
+	})
+	if n := fb.count(); n != 0 {
+		t.Fatalf("GameTracker was asked %d times although it is turned off", n)
+	}
+	for _, u := range col.get("a:1") {
+		if u.Source == SourceGameTracker {
+			t.Fatalf("update from GameTracker: %+v", u)
+		}
+	}
+}

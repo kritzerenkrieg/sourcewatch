@@ -2294,6 +2294,25 @@ func TestBlacklistRemoveSuggestsOnlyBlacklistedNamesToAdmins(t *testing.T) {
 	}
 }
 
+func TestAdminGameTrackerSettingAndStatus(t *testing.T) {
+	e := newEnv(t)
+	setupGuild(t, e, "a.example:27015")
+	contains(t, e.b.execute(guild("admin", manage, "admin", subcommand("settings"))), "GameTracker fallback: enabled")
+	got := e.b.execute(guild("admin", manage, "admin", subcommand("settings", str("gametracker", "disabled"))))
+	contains(t, got, "Settings saved", "GameTracker fallback: **disabled**")
+
+	srvs, _ := e.st.ListenerServers("guild:g1")
+	snap := rules.Snapshot{Online: true, Title: "Zombie", Map: "m", Players: 3, MaxPlayers: 64, NamesKnown: true, Source: "gametracker", DataAt: time.Now()}
+	e.st.Apply(srvs[0].ID, snap, time.Now())
+	contains(t, e.b.execute(guild("u1", 0, "status")), "no direct answer", "GameTracker is turned off")
+	if strings.Contains(e.b.execute(guild("u1", 0, "status")), "Zombie") {
+		t.Error("data from GameTracker is shown in a Discord server that turned it off")
+	}
+	// Direct data is shown as usual, and turning it on again shows GameTracker's.
+	e.b.execute(guild("admin", manage, "admin", subcommand("settings", str("gametracker", "enabled"))))
+	contains(t, e.b.execute(guild("u1", 0, "status")), "Zombie", "Via GameTracker")
+}
+
 func TestAdminCommandDefinition(t *testing.T) {
 	admin, ok := find("admin")
 	if !ok || len(admin.options) != 1 || admin.options[0].Name != "settings" || admin.options[0].Type != discordgo.ApplicationCommandOptionSubCommand {
@@ -2306,7 +2325,7 @@ func TestAdminCommandDefinition(t *testing.T) {
 		}
 		names = append(names, o.Name)
 	}
-	want := []string{"channel-delivery", "default-delivery", "default-cooldown", "active", "blacklist-add", "blacklist-remove"}
+	want := []string{"channel-delivery", "default-delivery", "default-cooldown", "active", "gametracker", "blacklist-add", "blacklist-remove"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("options %v, want %v", names, want)
 	}

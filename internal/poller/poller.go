@@ -31,7 +31,10 @@ type Poller struct {
 
 	// Fallback, when set, is asked for a server that A2S has failed OfflineAfter
 	// times in a row, before that server is declared offline (B5).
-	Fallback      Fallback
+	Fallback Fallback
+	// UseFallback, when set, is asked before each use of the fallback for a server, and says whether
+	// it may be used for it (E22). Nil means always.
+	UseFallback   func(addr string) bool
 	FallbackEvery time.Duration // default FallbackEvery
 	MaxDataAge    time.Duration // default MaxGameTrackerAge
 	Now           func() time.Time
@@ -105,7 +108,7 @@ func (p *Poller) runServer(ctx context.Context, addr string, first time.Duration
 			failures++
 			outcome := fbDown
 			var res GTResult
-			if p.Fallback != nil && failures >= OfflineAfter {
+			if p.Fallback != nil && failures >= OfflineAfter && (p.UseFallback == nil || p.UseFallback(addr)) {
 				res, outcome = p.tryFallback(ctx, addr, &fb)
 			}
 			switch outcome {

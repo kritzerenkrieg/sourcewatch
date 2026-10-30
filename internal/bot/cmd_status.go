@@ -35,11 +35,17 @@ func runStatus(b *Bot, in *discordgo.Interaction, _ []*discordgo.ApplicationComm
 			hidden[strings.ToLower(n)] = true
 		}
 	}
+	direct := !a.InGuild || b.guildSettings(a).GameTracker // false: this Discord server turned GameTracker off (E22)
 	var sb strings.Builder
 	for _, srv := range servers {
 		st, at, err := b.deps.Store.ServerState(srv.ID)
 		if err != nil {
 			return b.fail("read state", err)
+		}
+		if st != nil && st.Source == "gametracker" && !direct {
+			// The data came from GameTracker, which this Discord server does not use.
+			sb.WriteString(fmt.Sprintf("%s: **no direct answer**, and GameTracker is turned off in this Discord server.\n", code(srv.Addr)))
+			continue
 		}
 		if st != nil && len(hidden) > 0 {
 			view := *st

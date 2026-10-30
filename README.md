@@ -56,7 +56,7 @@ Only you can see the bot's replies to your commands, except `/status` and `/noti
 
 `/status` has no options. It shows every game server you watch: online or offline, players, map, how fresh the data is, and the names of the players who are online. The reply is **public**, so everyone in the channel sees it, which makes it good for answering "is anyone on?". Players on the Discord server's blacklist are left out of the names.
 
-If a server blocks direct queries, sourcewatch falls back to GameTracker. The line then says **Via GameTracker, scanned N min ago**, and that data can be a few minutes old.
+If a server blocks direct queries, sourcewatch falls back to GameTracker (an admin can turn that off with `/admin settings gametracker`). The line then says **Via GameTracker, scanned N min ago**, and that data can be a few minutes old.
 
 ## Notifications — `/notify`
 
@@ -138,6 +138,7 @@ For people with **Manage Server**, in a Discord server. The settings are for tha
 | `default-delivery` | **channel** (default) or **dm**: how a new notification is delivered. |
 | `default-cooldown` | Minutes: the cooldown of a new notification (default 60). |
 | `active` | **enabled** (default) or **disabled**. When disabled, sourcewatch is completely off in this Discord server: no notifications are sent and every command except `/admin` says so. DMs with the bot are not affected. |
+| `gametracker` | **enabled** (default) or **disabled**. When disabled, the game servers this Discord server watches are only ever queried directly and never looked up on GameTracker. They are declared offline after a few failed tries, and GameTracker data is not used here. |
 | `blacklist-add` | A player name nobody here can track. |
 | `blacklist-remove` | Take a name off the blacklist. |
 

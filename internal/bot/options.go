@@ -113,6 +113,7 @@ func adminOptions() []*discordgo.ApplicationCommandOption {
 					Choices: labeled([2]string{"channel", "channel"}, [2]string{"dm", "dm"})},
 				{Type: discordgo.ApplicationCommandOptionInteger, Name: "default-cooldown", Description: "Cooldown of new notifications, in minutes (default: 60)", MinValue: f64(1), MaxValue: 10080},
 				{Type: str, Name: "active", Description: "Turn sourcewatch on or off in this whole Discord server (enabled by default)", Choices: enabled},
+				{Type: str, Name: "gametracker", Description: "Use GameTracker when a game server does not answer direct queries (enabled by default)", Choices: enabled},
 				{Type: str, Name: "blacklist-add", Description: "A player name that nobody here can track"},
 				{Type: str, Name: "blacklist-remove", Description: "Take a player name off the blacklist", Autocomplete: true},
 			}},

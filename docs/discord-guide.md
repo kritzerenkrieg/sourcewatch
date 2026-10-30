@@ -89,6 +89,7 @@ Needs **Manage Server**, in a Discord server. The settings are for that Discord 
 • `default-delivery` — **channel** (default) or **dm**, for new notifications.
 • `default-cooldown` — minutes for new notifications (default 60).
 • `active` — **enabled** (default) or **disabled**. When disabled, sourcewatch is completely off in this Discord server and every command except `/admin` says so. DMs with the bot are not affected.
+• `gametracker` — **enabled** (default) or **disabled**. When disabled, game servers here are only queried directly and never looked up on GameTracker.
 • `blacklist-add` / `blacklist-remove` — a player name nobody here can track. For example someone who does not want to be tracked: nobody can make a `player` notification for the name, notifications that already track it stop firing, and `/status` leaves it out. It does not affect other Discord servers.
 
 The default delivery and cooldown only apply to notifications made afterwards. Everyone can still change their own with `/notify settings`.

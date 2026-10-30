@@ -63,6 +63,12 @@ func run(log *slog.Logger) error {
 	if !cfg.DisableGameTracker {
 		p.Fallback = poller.NewGameTracker() // used only when A2S gets no answer (B5)
 	}
+	// A Discord server can turn the fallback off for its game servers (E22). It stays on for a game
+	// server as long as one place that watches it wants it.
+	p.UseFallback = func(addr string) bool {
+		ok, err := st.GameTrackerAllowed(addr)
+		return err != nil || ok
+	}
 	mgr := poller.NewManager(ctx, p)
 	// Servers people asked the bot to watch come back after a restart. Their first polls, and those
 	// of the config file's servers, are spread over the first minute.
