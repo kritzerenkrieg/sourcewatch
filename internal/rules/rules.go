@@ -51,7 +51,7 @@ type Snapshot struct {
 const AllServers int64 = 0
 
 // MaxConditions is how many conditions one notification can combine.
-const MaxConditions = 5
+const MaxConditions = 8
 
 // Condition is one thing that can be true or false about a server right now. Whether it is
 // true is its level, and it only depends on the latest state.

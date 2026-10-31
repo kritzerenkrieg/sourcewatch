@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/kritzerenkrieg/sourcewatch/internal/rules"
 	"github.com/kritzerenkrieg/sourcewatch/internal/store"
 )
 
@@ -293,6 +294,13 @@ func runHelp(_ *Bot, _ *discordgo.Interaction, _ []*discordgo.ApplicationCommand
 	sb.WriteString("2. `/notify map`, `player`, `playercount`, `status` or `title-query` to choose what you want to hear about\n")
 	sb.WriteString("3. `/status` to show your servers and who is online (everyone in the channel sees it)\n")
 	sb.WriteString("Manage notifications with `/notify list`, `show`, `settings`, `remove` and `reset`. Admins use `/admin settings`.\n\n")
+	sb.WriteString("**Combine conditions**\n")
+	fmt.Fprintf(&sb, "Add `id:` to any `/notify` type to add it to that notification (up to %d). All must hold, but for several maps any one is enough.\n", rules.MaxConditions)
+	sb.WriteString("Example: `/notify map map-name:de_dust2` saves ID 1, then `/notify playercount value:>=10 id:1`\n\n")
+	sb.WriteString("**Notification settings** (`/notify settings id:1`, or no `id` for all)\n")
+	sb.WriteString("`delivery` - in this channel or by DM\n")
+	sb.WriteString("`cooldown` - minutes of quiet after it fires\n")
+	sb.WriteString("`active` - enabled or disabled\n\n")
 	sb.WriteString("**Commands**\n")
 	for _, c := range registry() {
 		fmt.Fprintf(&sb, "`/%s` - %s\n", c.name, c.description)

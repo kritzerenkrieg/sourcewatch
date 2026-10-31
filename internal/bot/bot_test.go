@@ -718,6 +718,8 @@ func TestVersionShowsTheBuildOrDev(t *testing.T) {
 func TestHelpHasQuickStartAndStaysShort(t *testing.T) {
 	got := newEnv(t).b.execute(dm("u1", "help"))
 	contains(t, got, "Quick start", "`/server`", "`/notify", "`/status`", "Manage Server")
+	contains(t, got, "id:", fmt.Sprintf("up to %d", rules.MaxConditions), "any one is enough", // combining (E13, E21)
+		"`/notify settings", "`delivery`", "by DM", "`cooldown`", "`active`", "disabled") // settings (E14)
 	for _, c := range commands() {
 		contains(t, got, "`/"+c.Name+"`")
 	}

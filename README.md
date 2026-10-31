@@ -94,7 +94,7 @@ For DMs the bot sends you a test message first. If Discord blocks it, open a DM 
 
 ## Combine conditions with `id`
 
-Add `id:12` to any `/notify` type to put that condition into notification **12** instead of making a new one. **All** of its conditions must be true together (up to 5, maps are the exception, see below), and it fires once when they all become true.
+Add `id:12` to any `/notify` type to put that condition into notification **12** instead of making a new one. **All** of its conditions must be true together (up to 8, maps are the exception, see below), and it fires once when they all become true.
 
 Example:
 

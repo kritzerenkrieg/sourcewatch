@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -276,7 +277,7 @@ func TestValidate(t *testing.T) {
 	}
 	bad := map[string]Notification{
 		"no conditions":     notif(),
-		"too many":          notif(mapIs("1"), mapIs("2"), mapIs("3"), mapIs("4"), mapIs("5"), mapIs("6")),
+		"too many":          notif(manyMaps(MaxConditions + 1)...),
 		"empty map":         notif(mapIs("")),
 		"blank player":      notif(hasPlayer("  ")),
 		"bad operator":      notif(players("=>", 1)),
@@ -515,4 +516,13 @@ func TestPlayerNamesMatchIgnoringSpacesAround(t *testing.T) {
 	if hasName([]string{"bo b"}, "bob") {
 		t.Error("spaces inside a name still count")
 	}
+}
+
+// manyMaps returns n distinct map conditions.
+func manyMaps(n int) []Condition {
+	cs := make([]Condition, n)
+	for i := range cs {
+		cs[i] = mapIs(fmt.Sprint(i + 1))
+	}
+	return cs
 }
