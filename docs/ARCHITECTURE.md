@@ -110,10 +110,11 @@ poller ──A2S/UDP──> game servers
 ## J. Repository layout
 
 ```
-README.md  the guide for people using the bot
 assets/    logo.png, logo.svg
-scripts/   check_dlad.py (validates DECISIONS.md and ROADMAP.md)
-docs/      discord-guide.md (the guide to paste into a Discord channel, in messages under 2000 characters)
+scripts/   check_dlad.py (validates docs/DECISIONS.md and docs/ROADMAP.md)
+docs/      every Markdown file: README.md (the guide for people using the bot), AGENTS.md, ARCHITECTURE.md,
+           DECISIONS.md, ROADMAP.md, and DISCORD-README.md (the guide to paste into a Discord channel, in
+           messages under 2000 characters)
 cmd/       sourcewatch/main.go (starts the poller and the bot together)
 internal/  app, bot, config, notify, poller, rules, store (one package per component of section C)
 deploy/    sourcewatch.service (the systemd unit, A3)

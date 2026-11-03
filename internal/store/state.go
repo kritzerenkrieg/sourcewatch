@@ -41,10 +41,9 @@ func lastState(q execer, serverID int64) (*rules.Snapshot, time.Time, error) {
 		online, known int
 		updated       int64
 	)
-	var dataAt int64
-	err := q.QueryRow(`SELECT online, title, map, players, max_players, names_known, updated_at, source, data_at
+	err := q.QueryRow(`SELECT online, title, map, players, max_players, names_known, updated_at
 		FROM server_state WHERE server_id = ?`, serverID).
-		Scan(&online, &sn.Title, &sn.Map, &sn.Players, &sn.MaxPlayers, &known, &updated, &sn.Source, &dataAt)
+		Scan(&online, &sn.Title, &sn.Map, &sn.Players, &sn.MaxPlayers, &known, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, time.Time{}, nil
 	}
@@ -52,9 +51,6 @@ func lastState(q execer, serverID int64) (*rules.Snapshot, time.Time, error) {
 		return nil, time.Time{}, err
 	}
 	sn.Online, sn.NamesKnown = online == 1, known == 1
-	if dataAt != 0 {
-		sn.DataAt = time.UnixMilli(dataAt)
-	}
 	rows, err := q.Query(`SELECT p.name FROM sessions s JOIN players p ON p.id = s.player_id
 		WHERE s.server_id = ? AND s.open = 1 ORDER BY p.name`, serverID)
 	if err != nil {
@@ -120,19 +116,11 @@ func apply(tx execer, serverID int64, cur rules.Snapshot, now time.Time) (prev *
 		cur.PlayerNames, cur.NamesKnown = prev.PlayerNames, prev.NamesKnown
 	}
 
-	source, dataAt := cur.Source, cur.DataAt
-	if source == "" {
-		source = "a2s"
-	}
-	if dataAt.IsZero() {
-		dataAt = now
-	}
-	_, err = tx.Exec(`INSERT INTO server_state(server_id, online, title, map, players, max_players, names_known, updated_at, source, data_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?)
+	_, err = tx.Exec(`INSERT INTO server_state(server_id, online, title, map, players, max_players, names_known, updated_at)
+		VALUES (?,?,?,?,?,?,?,?)
 		ON CONFLICT(server_id) DO UPDATE SET online=excluded.online, title=excluded.title, map=excluded.map,
-			players=excluded.players, max_players=excluded.max_players, names_known=excluded.names_known, updated_at=excluded.updated_at,
-			source=excluded.source, data_at=excluded.data_at`,
-		serverID, b2i(cur.Online), cur.Title, cur.Map, cur.Players, cur.MaxPlayers, b2i(cur.NamesKnown || !cur.Online), ms(now), source, ms(dataAt))
+			players=excluded.players, max_players=excluded.max_players, names_known=excluded.names_known, updated_at=excluded.updated_at`,
+		serverID, b2i(cur.Online), cur.Title, cur.Map, cur.Players, cur.MaxPlayers, b2i(cur.NamesKnown || !cur.Online), ms(now))
 	return prev, cur, err
 }
 

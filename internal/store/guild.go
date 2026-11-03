@@ -19,27 +19,30 @@ type GuildSettings struct {
 	DefaultCooldownSec int
 	// Active is false when sourcewatch is turned off in the whole Discord server.
 	Active bool
-	// GameTracker is false when the GameTracker fallback may not be used for the game servers this
-	// Discord server watches: only direct queries count here (E22).
-	GameTracker bool
+	// RoleMentions is false when /notify-role may not ping roles in this Discord server (E25).
+	RoleMentions bool
+	// RoleCooldownSec and RoleChannelID are what new role notifications get (E26). 0 and "" mean the
+	// usual default cooldown and the channel the command is run in.
+	RoleCooldownSec int
+	RoleChannelID   string
 }
 
 func defaultGuildSettings() GuildSettings {
-	return GuildSettings{ChannelDelivery: true, DefaultDelivery: "channel", Active: true, GameTracker: true}
+	return GuildSettings{ChannelDelivery: true, DefaultDelivery: "channel", Active: true, RoleMentions: true}
 }
 
 func guildSettings(q execer, scope string) (GuildSettings, error) {
 	g := defaultGuildSettings()
-	var ch, active, gt int
-	err := q.QueryRow(`SELECT channel_delivery, default_delivery, default_cooldown_sec, active, gametracker FROM guild_settings WHERE scope = ?`, scope).
-		Scan(&ch, &g.DefaultDelivery, &g.DefaultCooldownSec, &active, &gt)
+	var ch, active, roles int
+	err := q.QueryRow(`SELECT channel_delivery, default_delivery, default_cooldown_sec, active, role_mentions, role_cooldown_sec, role_channel_id FROM guild_settings WHERE scope = ?`, scope).
+		Scan(&ch, &g.DefaultDelivery, &g.DefaultCooldownSec, &active, &roles, &g.RoleCooldownSec, &g.RoleChannelID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return g, nil
 	}
 	if err != nil {
 		return g, err
 	}
-	g.ChannelDelivery, g.Active, g.GameTracker = ch == 1, active == 1, gt == 1
+	g.ChannelDelivery, g.Active, g.RoleMentions = ch == 1, active == 1, roles == 1
 	return g, nil
 }
 
@@ -52,7 +55,9 @@ type GuildPatch struct {
 	DefaultDelivery    *string
 	DefaultCooldownSec *int
 	Active             *bool
-	GameTracker        *bool
+	RoleMentions       *bool
+	RoleCooldownSec    *int
+	RoleChannelID      *string
 }
 
 // UpdateGuildSettings applies the patch and returns the settings as they are now.
@@ -91,13 +96,29 @@ func (s *Store) UpdateGuildSettings(scope string, p GuildPatch) (GuildSettings, 
 		}
 		g.Active = *p.Active
 	}
-	if p.GameTracker != nil {
-		g.GameTracker = *p.GameTracker
+	if p.RoleMentions != nil {
+		// Turned back on, role notifications start over like after E19, so nothing fires late.
+		if *p.RoleMentions && !g.RoleMentions {
+			if err := startOver(tx, "WHERE scope = ? AND role_id != ''", scope); err != nil {
+				return g, err
+			}
+		}
+		g.RoleMentions = *p.RoleMentions
 	}
-	_, err = tx.Exec(`INSERT INTO guild_settings(scope, channel_delivery, default_delivery, default_cooldown_sec, active, gametracker) VALUES (?,?,?,?,?,?)
+	if p.RoleCooldownSec != nil {
+		if *p.RoleCooldownSec < 0 {
+			return g, errors.New("cooldown must not be negative")
+		}
+		g.RoleCooldownSec = *p.RoleCooldownSec
+	}
+	if p.RoleChannelID != nil {
+		g.RoleChannelID = *p.RoleChannelID
+	}
+	_, err = tx.Exec(`INSERT INTO guild_settings(scope, channel_delivery, default_delivery, default_cooldown_sec, active, role_mentions, role_cooldown_sec, role_channel_id) VALUES (?,?,?,?,?,?,?,?)
 		ON CONFLICT(scope) DO UPDATE SET channel_delivery=excluded.channel_delivery, default_delivery=excluded.default_delivery,
-			default_cooldown_sec=excluded.default_cooldown_sec, active=excluded.active, gametracker=excluded.gametracker`,
-		scope, b2i(g.ChannelDelivery), g.DefaultDelivery, g.DefaultCooldownSec, b2i(g.Active), b2i(g.GameTracker))
+			default_cooldown_sec=excluded.default_cooldown_sec, active=excluded.active, role_mentions=excluded.role_mentions,
+			role_cooldown_sec=excluded.role_cooldown_sec, role_channel_id=excluded.role_channel_id`,
+		scope, b2i(g.ChannelDelivery), g.DefaultDelivery, g.DefaultCooldownSec, b2i(g.Active), b2i(g.RoleMentions), g.RoleCooldownSec, g.RoleChannelID)
 	if err != nil {
 		return g, err
 	}
@@ -169,15 +190,4 @@ func (s *Store) RemoveBlacklist(scope, name string) (removed bool, err error) {
 	}
 	n, _ := res.RowsAffected()
 	return n == 1, nil
-}
-
-// GameTrackerAllowed reports whether the GameTracker fallback may be used for a game server: unless
-// every place that watches it has turned the fallback off. A server nobody watches, one that is only
-// in the config, may use it.
-func (s *Store) GameTrackerAllowed(addr string) (bool, error) {
-	var total, allowing int
-	err := s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(COALESCE(g.gametracker, 1)), 0)
-		FROM listeners l JOIN servers v ON v.id = l.server_id LEFT JOIN guild_settings g ON g.scope = l.scope
-		WHERE v.addr = ?`, addr).Scan(&total, &allowing)
-	return total == 0 || allowing > 0, err
 }

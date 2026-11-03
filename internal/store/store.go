@@ -149,6 +149,30 @@ ALTER TABLE notifications ADD COLUMN num INTEGER NOT NULL DEFAULT 0;
 UPDATE notifications SET num = (SELECT COUNT(*) FROM notifications m
 	WHERE m.user_id = notifications.user_id AND m.scope = notifications.scope AND m.id <= notifications.id);
 CREATE UNIQUE INDEX notifications_num ON notifications(user_id, scope, num);
+`, `
+-- Role notifications (E25) ping a role. Their owner is a shared id for the whole Discord server.
+ALTER TABLE notifications ADD COLUMN role_id TEXT NOT NULL DEFAULT '';
+-- Schedules (E24): num 0 is the schedule for all of an owner's notifications in a place, and a
+-- notification's own number overrides it. Times are minutes after 00:00 UTC, days a 0/1 mask, Monday first.
+CREATE TABLE schedules (
+	user_id   TEXT    NOT NULL,
+	scope     TEXT    NOT NULL,
+	num       INTEGER NOT NULL,
+	start_min INTEGER NOT NULL,
+	end_min   INTEGER NOT NULL,
+	days      TEXT    NOT NULL,
+	PRIMARY KEY (user_id, scope, num)
+);
+`, `
+-- GameTracker was dropped (B5, E22, E23), and role mentions can be turned off per Discord server (E25).
+ALTER TABLE guild_settings DROP COLUMN gametracker;
+ALTER TABLE server_state DROP COLUMN source;
+ALTER TABLE server_state DROP COLUMN data_at;
+ALTER TABLE guild_settings ADD COLUMN role_mentions INTEGER NOT NULL DEFAULT 1;
+`, `
+-- Server-level settings of /notify-role (E26): the cooldown and channel new role notifications get.
+ALTER TABLE guild_settings ADD COLUMN role_cooldown_sec INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE guild_settings ADD COLUMN role_channel_id TEXT NOT NULL DEFAULT '';
 `}
 
 type Store struct{ db *sql.DB }

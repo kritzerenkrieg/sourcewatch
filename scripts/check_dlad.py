@@ -16,7 +16,7 @@ def cells(line):
 
 
 def read(name):
-    path = ROOT / name
+    path = ROOT / "docs" / name
     if not path.exists():
         errors.append(f"{name}: missing")
         return []

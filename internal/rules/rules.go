@@ -39,11 +39,6 @@ type Snapshot struct {
 	MaxPlayers  int
 	PlayerNames []string
 	NamesKnown  bool
-
-	// Source is "a2s" (also when empty) or "gametracker" (B5). DataAt is when the data was
-	// taken: for GameTracker the time of its scan, which can be minutes old.
-	Source string
-	DataAt time.Time
 }
 
 // AllServers as a notification's ServerID means every game server the place it was made in
@@ -110,6 +105,13 @@ type Notification struct {
 	CooldownSec int
 	Phase       Phase
 	LastFired   time.Time
+
+	// RoleID, when set, makes this a role notification (E25): it is posted in the channel and pings
+	// this role, and UserID is the shared owner of the Discord server's role notifications.
+	RoleID string
+	// Schedule, when set, limits when it can fire (E24). The store fills it in from the schedule of
+	// this notification, or else the one for all of the owner's notifications.
+	Schedule *Schedule
 }
 
 // Event is a notification that fired.
@@ -121,6 +123,7 @@ type Event struct {
 	Message        string
 	Delivery       string // DeliveryChannel or DeliveryDM
 	ChannelID      string
+	RoleID         string // a role notification pings this role in the channel (E25)
 }
 
 var ops = map[string]func(a, b int) bool{
@@ -243,6 +246,9 @@ func (c Condition) Phrase() string {
 func (n Notification) Validate() error {
 	if n.CooldownSec < 0 {
 		return fmt.Errorf("cooldown must not be negative")
+	}
+	if n.RoleID != "" && n.EffectiveDelivery() != DeliveryChannel {
+		return fmt.Errorf("a role notification is always posted in a channel")
 	}
 	switch n.EffectiveDelivery() {
 	case DeliveryChannel:
@@ -379,6 +385,10 @@ func (n Notification) Phrases() []string {
 // a condition that stays true never fires late. It returns the updated notification
 // (Phase and LastFired) and the event, if any. The caller saves the updated notification.
 func Evaluate(cur Snapshot, n Notification, now time.Time) (Notification, *Event) {
+	if n.Schedule != nil && !n.Schedule.Open(now) {
+		n.Phase = PhaseNew // outside the window: start over, so it waits for the conditions after it opens (E24)
+		return n, nil
+	}
 	switch n.level(cur) {
 	case levelUnknown:
 		return n, nil // cannot tell, so nothing changes
@@ -410,7 +420,7 @@ func newEvent(cur Snapshot, n Notification) *Event {
 		msg = fmt.Sprintf("%s: %s.", span(cur.Title), strings.Join(phrases, " and "))
 	}
 	return &Event{NotificationID: n.ID, UserID: n.UserID, ServerID: n.ServerID, Title: title, Message: msg,
-		Delivery: n.EffectiveDelivery(), ChannelID: n.ChannelID}
+		Delivery: n.EffectiveDelivery(), ChannelID: n.ChannelID, RoleID: n.RoleID}
 }
 
 // single writes the title and text for a notification with one condition. Server names go

@@ -30,7 +30,8 @@ type botCmd struct {
 func registry() []botCmd {
 	return []botCmd{
 		{name: "server", description: "Add or remove a game server to watch (needs Manage Server in a server)", options: serverOptions(), run: runServer},
-		{name: "notify", description: "Get a notification when something happens on a game server", options: notifyOptions(), run: runNotify},
+		{name: "notify", description: "Get a notification when something happens on a game server", options: notifyOptions(false), run: runNotify},
+		{name: "notify-role", description: "Role pings, shared by the whole server (needs Manage Server)", options: notifyOptions(true), run: runNotifyRole},
 		{name: "status", description: "Show what your game servers are doing and who is online, to everyone here", public: true, run: runStatus},
 		{name: "admin", description: "Settings for this Discord server (needs Manage Server)", options: adminOptions(), run: runAdmin},
 		{name: "help", description: "How to use sourcewatch", run: runHelp},
@@ -208,8 +209,15 @@ func (b *Bot) executeReply(in *discordgo.Interaction) reply {
 	// The reset question gets its buttons, unless sourcewatch is turned off here and the reply
 	// says so instead (E15).
 	if a := who(in); isNotifySubcommand(in, "reset") && b.guildSettings(a).Active {
+		role := in.ApplicationCommandData().Name == "notify-role"
+		if role {
+			var msg string
+			if a, msg = roleActor(a); msg != "" {
+				return r
+			}
+		}
 		if n := b.notificationCount(a); n > 0 {
-			r.components = resetButtons(n)
+			r.components = resetButtons(n, role)
 		}
 	}
 	return r
@@ -288,25 +296,25 @@ func (b *Bot) execute(in *discordgo.Interaction) string {
 
 func runHelp(_ *Bot, _ *discordgo.Interaction, _ []*discordgo.ApplicationCommandInteractionDataOption) string {
 	var sb strings.Builder
-	sb.WriteString("**sourcewatch** tells you when something happens on a Source game server: a map change, a player joining, a full server, or a server going offline.\n\n")
+	sb.WriteString("**sourcewatch** tells you when a Source game server changes map, gets a player, fills up or goes offline.\n\n")
 	sb.WriteString("**Quick start**\n")
 	sb.WriteString("1. `/server add` to watch a game server (in a Discord server you need Manage Server)\n")
-	sb.WriteString("2. `/notify map`, `player`, `playercount`, `status` or `title-query` to choose what you want to hear about\n")
-	sb.WriteString("3. `/status` to show your servers and who is online (everyone in the channel sees it)\n")
-	sb.WriteString("Manage notifications with `/notify list`, `show`, `settings`, `remove` and `reset`. Admins use `/admin settings`.\n\n")
+	sb.WriteString("2. `/notify map`, `player`, `playercount`, `status` or `title-query` to pick what to hear about\n")
+	sb.WriteString("3. `/status` shows your servers and who is online (everyone here sees it)\n")
+	sb.WriteString("Manage notifications with `/notify list`, `show`, `settings`, `schedule`, `remove` and `reset`. Admins use `/admin settings`.\n\n")
 	sb.WriteString("**Combine conditions**\n")
 	fmt.Fprintf(&sb, "Add `id:` to any `/notify` type to add it to that notification (up to %d). All must hold, but for several maps any one is enough.\n", rules.MaxConditions)
-	sb.WriteString("Example: `/notify map map-name:de_dust2` saves ID 1, then `/notify playercount value:>=10 id:1`\n\n")
-	sb.WriteString("**Notification settings** (`/notify settings id:1`, or no `id` for all)\n")
+	sb.WriteString("Example: `/notify map map-name:de_dust2`, then `/notify playercount value:>=10 id:1`\n\n")
+	sb.WriteString("**Settings** (`/notify settings id:1`, or no `id` for all)\n")
 	sb.WriteString("`delivery` - in this channel or by DM\n")
 	sb.WriteString("`cooldown` - minutes of quiet after it fires\n")
-	sb.WriteString("`active` - enabled or disabled\n\n")
+	sb.WriteString("`active` - enabled or disabled\n")
+	sb.WriteString("`/notify schedule time:18:00-23:00 day:0000011` - only Sat+Sun (UTC)\n\n")
 	sb.WriteString("**Commands**\n")
 	for _, c := range registry() {
 		fmt.Fprintf(&sb, "`/%s` - %s\n", c.name, c.description)
 	}
-	sb.WriteString("\nNotifications arrive in the channel where you made them, or by DM if you choose that.")
-	return sb.String()
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 // runVersion is /version: the build of the bot that is running.

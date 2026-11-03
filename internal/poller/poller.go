@@ -11,16 +11,12 @@ const OfflineAfter = 3
 
 // Update is reported after every cycle. Transition is true when Online changed
 // (including the first result for a server). Err is set when the cycle failed.
-// Source says where State came from, and DataAt when that data was taken: the poll
-// time for A2S, the scan time for GameTracker.
 type Update struct {
 	Addr       string
 	Online     bool
 	Transition bool
 	State      State
 	Err        error
-	Source     string
-	DataAt     time.Time
 }
 
 type Poller struct {
@@ -29,15 +25,7 @@ type Poller struct {
 	Jitter   time.Duration // ±5 s (B3)
 	OnUpdate func(Update)
 
-	// Fallback, when set, is asked for a server that A2S has failed OfflineAfter
-	// times in a row, before that server is declared offline (B5).
-	Fallback Fallback
-	// UseFallback, when set, is asked before each use of the fallback for a server, and says whether
-	// it may be used for it (E22). Nil means always.
-	UseFallback   func(addr string) bool
-	FallbackEvery time.Duration // default FallbackEvery
-	MaxDataAge    time.Duration // default MaxGameTrackerAge
-	Now           func() time.Time
+	Now func() time.Time
 }
 
 func (p *Poller) now() time.Time {
@@ -70,65 +58,31 @@ func (p *Poller) Run(ctx context.Context, addrs []string) {
 	wg.Wait()
 }
 
-// fbState is the fallback bookkeeping for one server.
-type fbState struct {
-	lastFetch time.Time
-	lastScan  time.Time
-	lastOK    bool // the last fetch said the server is alive, with fresh data
-}
-
-type fbOutcome int
-
-const (
-	fbDown    fbOutcome = iota // no usable data: the server is offline
-	fbNothing                  // alive, but nothing new since the last update
-	fbApplied                  // alive, with a newer scan
-)
-
 // runServer polls addr until ctx is cancelled. The first poll comes after first.
 func (p *Poller) runServer(ctx context.Context, addr string, first time.Duration) {
 	if !sleep(ctx, first) {
 		return
 	}
 	failures, known, online := 0, false, false
-	var fb fbState
 	for {
 		st, err := p.cycle(ctx, addr)
 		if ctx.Err() != nil {
 			return
 		}
-		u := Update{Addr: addr, State: st, Err: err, Source: SourceA2S, DataAt: p.now()}
-		emit := true
+		u := Update{Addr: addr, State: st, Err: err}
 		if err == nil {
 			failures = 0
-			fb = fbState{} // A2S works again, so the fallback starts over if it is ever needed
 			u.Transition = !known || !online
 			online, known = true, true
 		} else {
 			failures++
-			outcome := fbDown
-			var res GTResult
-			if p.Fallback != nil && failures >= OfflineAfter && (p.UseFallback == nil || p.UseFallback(addr)) {
-				res, outcome = p.tryFallback(ctx, addr, &fb)
-			}
-			switch outcome {
-			case fbApplied:
-				u.State, u.Err, u.Source, u.DataAt = res.State, nil, SourceGameTracker, res.ScannedAt
-				u.Transition = !known || !online
-				online, known = true, true
-			case fbNothing:
-				emit = false
-			default:
-				if failures >= OfflineAfter && (!known || online) {
-					u.Transition = true
-					online, known = false, true
-				}
+			if failures >= OfflineAfter && (!known || online) {
+				u.Transition = true
+				online, known = false, true
 			}
 		}
 		u.Online = online
-		if emit {
-			p.OnUpdate(u)
-		}
+		p.OnUpdate(u)
 		if !sleep(ctx, Delay(p.Interval, p.Jitter, rand.Float64())) {
 			return
 		}
@@ -148,40 +102,6 @@ func sleep(ctx context.Context, d time.Duration) bool {
 	case <-t.C:
 		return true
 	}
-}
-
-// tryFallback asks the fallback about a server A2S cannot reach, at most once per
-// FallbackEvery. Data is used only when the page says Alive, its scan is recent
-// enough, and it is newer than the one already used.
-func (p *Poller) tryFallback(ctx context.Context, addr string, fb *fbState) (GTResult, fbOutcome) {
-	every, maxAge := p.FallbackEvery, p.MaxDataAge
-	if every <= 0 {
-		every = FallbackEvery
-	}
-	if maxAge <= 0 {
-		maxAge = MaxGameTrackerAge
-	}
-	now := p.now()
-	if !fb.lastFetch.IsZero() && now.Sub(fb.lastFetch) < every {
-		if fb.lastOK {
-			return GTResult{}, fbNothing
-		}
-		return GTResult{}, fbDown
-	}
-	fb.lastFetch = now
-	res, err := p.Fallback.Fetch(ctx, addr, now)
-	if err != nil || !res.Alive || res.Age > maxAge {
-		fb.lastOK = false
-		return GTResult{}, fbDown
-	}
-	fb.lastOK = true
-	// The same scan shows up in every fetch until GameTracker scans again. The page
-	// gives the age in whole seconds, so allow for that rounding.
-	if !fb.lastScan.IsZero() && !res.ScannedAt.After(fb.lastScan.Add(5*time.Second)) {
-		return GTResult{}, fbNothing
-	}
-	fb.lastScan = res.ScannedAt
-	return res, fbApplied
 }
 
 func (p *Poller) cycle(ctx context.Context, addr string) (State, error) {

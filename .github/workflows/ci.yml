@@ -36,7 +36,7 @@ jobs:
         run: CGO_ENABLED=0 go build ./...
       - name: Test
         run: go test -race ./...
-      - name: Check DECISIONS.md and ROADMAP.md
+      - name: Check docs/DECISIONS.md and docs/ROADMAP.md
         run: python3 scripts/check_dlad.py
 
   debian:
@@ -85,7 +85,7 @@ jobs:
               $0 == want { on = 1; next }
               on && /^```sh$/ { code = 1; next }
               code && /^```$/ { exit }
-              code { print }' README.md
+              code { print }' docs/README.md
           }
           step 1 | tee step1.sh && test -s step1.sh && bash -ex step1.sh
           # Instead of sudoedit: a server to poll and no token, so it runs without Discord.

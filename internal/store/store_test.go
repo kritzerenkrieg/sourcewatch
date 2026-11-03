@@ -88,12 +88,7 @@ func TestLastStateSurvivesRestart(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("got %v, %v", got, err)
 	}
-	if !got.DataAt.Equal(t0) {
-		t.Fatalf("data time %v, want %v", got.DataAt, t0)
-	}
-	got.DataAt = time.Time{} // compared above; the zone differs after a reload
 	want := online("Dust", "de_dust2", "alice", "bob")
-	want.Source = "a2s"
 	if !reflect.DeepEqual(*got, want) {
 		t.Fatalf("got %+v, want %+v", *got, want)
 	}
@@ -536,23 +531,6 @@ func TestServerStateReportsWhenStored(t *testing.T) {
 	st, at, err := s.ServerState(id)
 	if err != nil || st == nil || !at.Equal(t0) {
 		t.Fatalf("%v %v %v", st, at, err)
-	}
-}
-
-func TestStateRemembersSourceAndDataTime(t *testing.T) {
-	s, _ := open(t)
-	id, _ := s.UpsertServer("a:1")
-	s.Apply(id, online("T", "m"), t0)
-	if st, _, _ := s.ServerState(id); st.Source != "a2s" || !st.DataAt.Equal(t0) {
-		t.Fatalf("default source %+v", st)
-	}
-	scan := t0.Add(-7 * time.Minute)
-	gt := online("T", "m")
-	gt.Source, gt.DataAt = "gametracker", scan
-	s.Apply(id, gt, t0.Add(time.Minute))
-	st, at, _ := s.ServerState(id)
-	if st.Source != "gametracker" || !st.DataAt.Equal(scan) || !at.Equal(t0.Add(time.Minute)) {
-		t.Fatalf("got %+v at %v", st, at)
 	}
 }
 
@@ -1362,71 +1340,6 @@ func TestADeletedNotificationLeavesNothingBehind(t *testing.T) {
 	}
 }
 
-func TestGameTrackerIsAllowedUnlessEveryPlaceWatchingTheServerTurnedItOff(t *testing.T) {
-	s, _ := open(t)
-	allowed := func(addr string) bool {
-		ok, err := s.GameTrackerAllowed(addr)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return ok
-	}
-	if !allowed("nobody:1") {
-		t.Error("a server nobody watches (the config's) may use it")
-	}
-	s.AddListener("guild:1", "a:1", "x", t0)
-	if !allowed("a:1") {
-		t.Error("allowed by default")
-	}
-	s.UpdateGuildSettings("guild:1", GuildPatch{GameTracker: ptr(false)})
-	if allowed("a:1") {
-		t.Error("the only place watching it turned it off")
-	}
-	s.AddListener("guild:2", "a:1", "y", t0) // never set anything, so it is on
-	if !allowed("a:1") {
-		t.Error("another place watching it still wants it")
-	}
-	s.UpdateGuildSettings("guild:2", GuildPatch{GameTracker: ptr(false)})
-	s.AddListener("dm:u", "a:1", "u", t0) // a DM has no settings, so it is on
-	if !allowed("a:1") {
-		t.Error("a DM watching it still wants it")
-	}
-}
-
-func TestGameTrackerDataDoesNotCountInADiscordServerThatTurnedItOff(t *testing.T) {
-	s, _ := open(t)
-	a, _, _ := s.AddListener("guild:1", "a:1", "x", t0)
-	s.AddListener("guild:2", "a:1", "y", t0)
-	for _, scope := range []string{"guild:1", "guild:2"} {
-		s.AddNotification(rules.Notification{UserID: scope, Scope: scope, ServerID: a.ID, ChannelID: "c", CooldownSec: 1,
-			Conditions: []rules.Condition{{Kind: rules.KindMap, Text: "m2"}}})
-	}
-	s.UpdateGuildSettings("guild:1", GuildPatch{GameTracker: ptr(false)})
-	viaGT := func(mp string) rules.Snapshot {
-		sn := online("T", mp)
-		sn.Source = "gametracker"
-		return sn
-	}
-	if _, err := s.Process(a.ID, viaGT("m1"), t0.Add(time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	evs, err := s.Process(a.ID, viaGT("m2"), t0.Add(2*time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(evs) != 1 || evs[0].UserID != "guild:2" {
-		t.Fatalf("events %+v, want only guild:2's", evs)
-	}
-	// A direct answer counts everywhere.
-	if _, err := s.Process(a.ID, online("T", "m1"), t0.Add(3*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	evs, _ = s.Process(a.ID, online("T", "m2"), t0.Add(4*time.Minute))
-	if len(evs) != 2 {
-		t.Fatalf("events %+v, want both Discord servers' once direct answers are used", evs)
-	}
-}
-
 func TestNotificationNumbersArePerPersonAndPlace(t *testing.T) {
 	s, _ := open(t)
 	a, _, _ := s.AddListener("guild:1", "a:1", "x", t0)
@@ -1500,5 +1413,161 @@ func TestMigrationNumbersExistingNotificationsPerPerson(t *testing.T) {
 	rows.Close()
 	if want := map[int64]int64{1: 1, 2: 2, 3: 1, 8: 3, 9: 1}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("numbers %v, want %v", got, want)
+	}
+}
+
+func TestSchedulesOverrideAndFollowTheirNotification(t *testing.T) {
+	s, _ := open(t)
+	a, _, _ := s.AddListener("guild:1", "a:1", "x", t0)
+	mk := func() rules.Notification {
+		n, err := s.AddNotificationAt(rules.Notification{UserID: "u", Scope: "guild:1", ServerID: a.ID, ChannelID: "c1",
+			Conditions: []rules.Condition{{Kind: rules.KindMap, Text: "m"}}}, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	one, two := mk(), mk()
+	all, _ := rules.ParseSchedule("10:00-11:00", "1111100")
+	own, _ := rules.ParseSchedule("20:00-21:00", "0000011")
+	if err := s.SetSchedule("u", "guild:1", 0, all); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSchedule("u", "guild:1", two.Num, own); err != nil {
+		t.Fatal(err)
+	}
+	get := func() map[int64]*rules.Schedule {
+		ns, _ := s.UserNotifications("u", "guild:1")
+		out := map[int64]*rules.Schedule{}
+		for _, n := range ns {
+			out[n.Num] = n.Schedule
+		}
+		return out
+	}
+	got := get()
+	if got[one.Num] == nil || *got[one.Num] != all || got[two.Num] == nil || *got[two.Num] != own {
+		t.Fatalf("the schedule for all applies, and a notification's own wins: %+v", got)
+	}
+	// Another person's schedule does not touch this one.
+	other, _ := rules.ParseSchedule("01:00-02:00", "")
+	s.SetSchedule("v", "guild:1", 0, other)
+	if got = get(); *got[one.Num] != all {
+		t.Fatal("someone else's schedule applied")
+	}
+	// Deleting a notification takes its own schedule along, and its number is reused clean.
+	if ok, err := s.DeleteNotification(two.ID, "u", "guild:1"); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	if sc, _ := s.Schedule("u", "guild:1", two.Num); sc != nil {
+		t.Fatalf("the schedule outlived its notification: %+v", sc)
+	}
+	again := mk()
+	if again.Num != two.Num {
+		t.Fatalf("number %d not reused: %d", two.Num, again.Num)
+	}
+	if got = get(); *got[again.Num] != all {
+		t.Fatalf("the reused number falls back to the schedule for all: %+v", got[again.Num])
+	}
+	if removed, _ := s.ClearSchedule("u", "guild:1", 0); !removed {
+		t.Fatal("nothing to clear")
+	}
+	if got = get(); got[one.Num] != nil {
+		t.Fatal("cleared")
+	}
+	if removed, _ := s.ClearSchedule("u", "guild:1", 0); removed {
+		t.Fatal("second clear should find nothing")
+	}
+}
+
+func TestAScheduledNotificationOnlyFiresInsideItsWindow(t *testing.T) {
+	s, _ := open(t)
+	a, _, _ := s.AddListener("guild:1", "a:1", "x", t0) // t0 is Tuesday 12:00 UTC
+	s.AddNotification(rules.Notification{UserID: "u", Scope: "guild:1", ServerID: a.ID, ChannelID: "c1", CooldownSec: 1,
+		Conditions: []rules.Condition{{Kind: rules.KindMap, Text: "m2"}}})
+	win, _ := rules.ParseSchedule("14:00-15:00", "")
+	s.SetSchedule("u", "guild:1", 0, win)
+	step := 0
+	fire := func(at time.Duration, mp string) int {
+		step++
+		evs, err := s.Process(a.ID, online("T", mp), t0.Add(at))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(evs)
+	}
+	fire(0, "m1")
+	if fire(time.Hour, "m2") != 0 { // 13:00, closed
+		t.Fatal("fired outside the window")
+	}
+	if fire(2*time.Hour+time.Minute, "m2") != 0 { // 14:01, already true when it opened
+		t.Fatal("fired for a condition that held when the window opened")
+	}
+	fire(2*time.Hour+2*time.Minute, "m1")
+	if fire(2*time.Hour+3*time.Minute, "m2") != 1 {
+		t.Fatal("did not fire inside the window")
+	}
+}
+
+func TestRoleNotificationsCarryTheirRoleAndStopWhenChannelDeliveryIsOff(t *testing.T) {
+	s, _ := open(t)
+	a, _, _ := s.AddListener("guild:1", "a:1", "x", t0)
+	n, err := s.AddNotificationAt(rules.Notification{UserID: "role:guild:1", Scope: "guild:1", ServerID: a.ID, ChannelID: "c1", RoleID: "777", CooldownSec: 1,
+		Conditions: []rules.Condition{{Kind: rules.KindMap, Text: "m2"}}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddNotificationAt(rules.Notification{UserID: "role:guild:1", Scope: "guild:1", ServerID: a.ID, RoleID: "777", Delivery: rules.DeliveryDM,
+		Conditions: []rules.Condition{{Kind: rules.KindMap, Text: "m2"}}}, 0); err == nil {
+		t.Fatal("a role notification by DM must be refused")
+	}
+	if got, _ := s.UserNotifications("role:guild:1", "guild:1"); len(got) != 1 || got[0].RoleID != "777" || got[0].Num != n.Num {
+		t.Fatalf("%+v", got)
+	}
+	step := 0
+	fire := func(mp string) []rules.Event {
+		step++
+		evs, _ := s.Process(a.ID, online("T", mp), t0.Add(time.Duration(step)*time.Minute))
+		return evs
+	}
+	fire("m1")
+	if evs := fire("m2"); len(evs) != 1 || evs[0].RoleID != "777" || evs[0].Delivery != rules.DeliveryChannel || evs[0].ChannelID != "c1" {
+		t.Fatalf("%+v", evs)
+	}
+	// With channel delivery off a role cannot be pinged, and it must not turn into a DM.
+	s.UpdateGuildSettings("guild:1", GuildPatch{ChannelDelivery: ptr(false)})
+	fire("m1")
+	if evs := fire("m2"); len(evs) != 0 {
+		t.Fatalf("%+v", evs)
+	}
+}
+
+func TestRoleMentionsOffSilencesRoleNotificationsAndTheyStartOverWhenBackOn(t *testing.T) {
+	s, _ := open(t)
+	a, _, _ := s.AddListener("guild:1", "a:1", "x", t0)
+	s.AddNotificationAt(rules.Notification{UserID: "role:guild:1", Scope: "guild:1", ServerID: a.ID, ChannelID: "c1", RoleID: "7", CooldownSec: 1,
+		Conditions: []rules.Condition{{Kind: rules.KindMap, Text: "m2"}}}, 0)
+	s.AddNotification(rules.Notification{UserID: "u", Scope: "guild:1", ServerID: a.ID, ChannelID: "c1", CooldownSec: 1,
+		Conditions: []rules.Condition{{Kind: rules.KindMap, Text: "m2"}}})
+	if g, _ := s.GuildSettings("guild:1"); !g.RoleMentions {
+		t.Fatal("role mentions are on by default")
+	}
+	step := 0
+	fire := func(mp string) []rules.Event {
+		step++
+		evs, _ := s.Process(a.ID, online("T", mp), t0.Add(time.Duration(step)*time.Minute))
+		return evs
+	}
+	fire("m1")
+	s.UpdateGuildSettings("guild:1", GuildPatch{RoleMentions: ptr(false)})
+	if evs := fire("m2"); len(evs) != 1 || evs[0].RoleID != "" {
+		t.Fatalf("only the personal one fires: %+v", evs)
+	}
+	s.UpdateGuildSettings("guild:1", GuildPatch{RoleMentions: ptr(true)})
+	if evs := fire("m2"); len(evs) != 0 { // the condition held while it was off: starts over
+		t.Fatalf("fired late: %+v", evs)
+	}
+	fire("m1")
+	if evs := fire("m2"); len(evs) != 2 {
+		t.Fatalf("both fire again: %+v", evs)
 	}
 }

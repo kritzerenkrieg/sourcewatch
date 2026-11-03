@@ -99,6 +99,7 @@ type sent struct {
 	AllowedMentions *struct {
 		Parse []string `json:"parse"`
 		Users []string `json:"users"`
+		Roles []string `json:"roles"`
 	} `json:"allowed_mentions"`
 }
 
@@ -457,4 +458,42 @@ type failingNotifier struct {
 func (f *failingNotifier) Send(context.Context, Target, string, string) error {
 	f.calls++
 	return f.err
+}
+
+func TestRoleNotificationPingsOnlyTheRole(t *testing.T) {
+	d, f := newNotifier(t, ok)
+	err := d.Send(context.Background(), Target{Delivery: rules.DeliveryChannel, ChannelID: "555", RoleID: "777"},
+		"Map change", "@everyone <@999> <@&888> joined @here")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, raw := body(t, f.last("/channels/555/messages"))
+	if !strings.HasPrefix(m.Content, "<@&777> ") {
+		t.Errorf("content %q should start with the role mention", m.Content)
+	}
+	am := m.AllowedMentions
+	if am == nil || am.Parse == nil || len(am.Parse) != 0 || len(am.Users) != 0 || len(am.Roles) != 1 || am.Roles[0] != "777" {
+		t.Errorf("allowed_mentions must list only the role: %s", raw)
+	}
+	for _, bad := range []Target{{ChannelID: "555", RoleID: "x1"}, {ChannelID: "x", RoleID: "777"}, {Delivery: rules.DeliveryDM, ChannelID: "555", RoleID: "777"}} {
+		if err := d.Send(context.Background(), bad, "t", "m"); err == nil {
+			t.Errorf("%+v should be refused", bad)
+		}
+	}
+}
+
+func TestRoleEventsMergeByRoleAndNeverWithPeople(t *testing.T) {
+	ev := func(id int64, user, role string) rules.Event {
+		return rules.Event{NotificationID: id, UserID: user, ChannelID: "c1", Title: "T", Message: "M", Delivery: rules.DeliveryChannel, RoleID: role}
+	}
+	got := groupEvents([]rules.Event{ev(1, "role:guild:1", "7"), ev(2, "role:guild:1", "7"), ev(3, "role:guild:1", "8"), ev(4, "u1", ""), ev(5, "u2", "")})
+	if len(got) != 3 {
+		t.Fatalf("%d messages: %+v", len(got), got)
+	}
+	if got[0].target.RoleID != "7" || !reflect.DeepEqual(got[0].notificationIDs, []int64{1, 2}) {
+		t.Errorf("same role, channel and text is one message: %+v", got[0])
+	}
+	if got[1].target.RoleID != "8" || len(got[2].target.UserIDs) != 2 || got[2].target.RoleID != "" {
+		t.Errorf("%+v %+v", got[1], got[2])
+	}
 }

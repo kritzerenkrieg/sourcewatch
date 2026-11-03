@@ -153,7 +153,7 @@ func TestDatabaseNameKeepsAnExistingOldFile(t *testing.T) {
 // TestEverySettingIsInTheREADME keeps the configuration reference of the README complete: every
 // field of the file and every SOURCEWATCH_ variable that Load reads must be named there.
 func TestEverySettingIsInTheREADME(t *testing.T) {
-	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	readme, err := os.ReadFile(filepath.Join("..", "..", "docs", "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

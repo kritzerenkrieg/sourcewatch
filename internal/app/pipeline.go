@@ -48,8 +48,7 @@ func (p *Pipeline) Handle(u poller.Update) {
 	switch {
 	case u.Err == nil:
 		snap = rules.Snapshot{Online: true, Title: u.State.Name, Map: u.State.Map, Players: u.State.Players,
-			MaxPlayers: u.State.MaxPlayers, PlayerNames: u.State.PlayerNames, NamesKnown: u.State.NamesKnown,
-			Source: u.Source, DataAt: u.DataAt}
+			MaxPlayers: u.State.MaxPlayers, PlayerNames: u.State.PlayerNames, NamesKnown: u.State.NamesKnown}
 	case u.Transition && !u.Online:
 		snap = rules.Snapshot{} // offline
 		p.Log.Warn("server offline", "server", u.Addr, "err", u.Err)

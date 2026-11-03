@@ -14,6 +14,10 @@ import (
 func (b *Bot) autocomplete(in *discordgo.Interaction) []*discordgo.ApplicationCommandOptionChoice {
 	data := in.ApplicationCommandData()
 	cmd, options := data.Name, data.Options
+	roleCmd := cmd == "notify-role" // same suggestions as /notify, for the Discord server's role notifications
+	if roleCmd {
+		cmd = "notify"
+	}
 	sub := "" // the subcommand: for /notify it says what the value means, for /server add or remove
 	if (cmd == "notify" || cmd == "server" || cmd == "admin") && len(options) > 0 {
 		sub, options = options[0].Name, options[0].Options
@@ -36,6 +40,12 @@ func (b *Bot) autocomplete(in *discordgo.Interaction) []*discordgo.ApplicationCo
 		typed = strconv.Itoa(int(v))
 	}
 	a := who(in)
+	if roleCmd {
+		var msg string
+		if a, msg = roleActor(a); msg != "" {
+			return nil
+		}
+	}
 	if cmd != "admin" && !b.guildSettings(a).Active {
 		return nil // sourcewatch is turned off here
 	}
@@ -104,6 +114,12 @@ func (b *Bot) autocomplete(in *discordgo.Interaction) []*discordgo.ApplicationCo
 				}
 			}
 		}
+	case cmd == "notify" && sub == "schedule" && focused.Name == "day":
+		for _, d := range dayChoices {
+			if strings.HasPrefix(d.value, strings.TrimSpace(typed)) {
+				add(d.name, d.value)
+			}
+		}
 	case cmd == "admin" && focused.Name == "blacklist-remove":
 		if !a.InGuild || !a.CanManage {
 			return nil
@@ -127,6 +143,17 @@ func (b *Bot) autocomplete(in *discordgo.Interaction) []*discordgo.ApplicationCo
 		}
 	}
 	return out
+}
+
+// dayChoices are common day masks for /notify schedule, Monday first.
+var dayChoices = []countChoice{
+	{"Every day (1111111)", "1111111"},
+	{"Weekdays, Mon-Fri (1111100)", "1111100"},
+	{"Weekend, Sat-Sun (0000011)", "0000011"},
+	{"Friday to Sunday (0000111)", "0000111"},
+	{"Monday only (1000000)", "1000000"},
+	{"Saturday only (0000010)", "0000010"},
+	{"Sunday only (0000001)", "0000001"},
 }
 
 // clipName fits Discord's 100 character limit on a choice name.

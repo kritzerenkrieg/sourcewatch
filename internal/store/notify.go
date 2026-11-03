@@ -57,9 +57,13 @@ func (s *Store) AddNotificationAt(n rules.Notification, num int64) (rules.Notifi
 		}
 	}
 	// The legacy single-condition columns still exist and are NOT NULL, so they are filled with blanks.
-	_, err = tx.Exec(`INSERT INTO notifications(id, num, user_id, scope, server_id, kind, cooldown_sec, armed, phase, delivery, channel_id)
-		VALUES (?,?,?,?,?,'',?,1,?,?,?)`, id, num, n.UserID, n.Scope, n.ServerID, n.CooldownSec, int(rules.PhaseNew), n.EffectiveDelivery(), n.ChannelID)
+	_, err = tx.Exec(`INSERT INTO notifications(id, num, user_id, scope, server_id, kind, cooldown_sec, armed, phase, delivery, channel_id, role_id)
+		VALUES (?,?,?,?,?,'',?,1,?,?,?,?)`, id, num, n.UserID, n.Scope, n.ServerID, n.CooldownSec, int(rules.PhaseNew), n.EffectiveDelivery(), n.ChannelID, n.RoleID)
 	if err != nil {
+		return n, err
+	}
+	// A schedule left behind by a deleted notification with this number must not apply to the new one.
+	if _, err := tx.Exec("DELETE FROM schedules WHERE user_id = ? AND scope = ? AND num = ?", n.UserID, n.Scope, num); err != nil {
 		return n, err
 	}
 	for _, c := range n.Conditions {
@@ -139,7 +143,7 @@ func (s *Store) AddCondition(id int64, userID string, c rules.Condition) (rules.
 	return n, tx.Commit()
 }
 
-const notificationCols = `id, num, user_id, scope, server_id, cooldown_sec, phase, last_fired, delivery, channel_id, undeliverable, disabled`
+const notificationCols = `id, num, user_id, scope, server_id, cooldown_sec, phase, last_fired, delivery, channel_id, undeliverable, disabled, role_id`
 
 // notifications returns the notifications to check for a server: those made for it, and those made
 // for all servers by a place that watches it. Disabled ones, ones stopped because their DM was
@@ -168,7 +172,7 @@ func queryNotifications(tx execer, where string, args ...any) ([]rules.Notificat
 			last          int64
 		)
 		if err := rows.Scan(&n.ID, &n.Num, &n.UserID, &n.Scope, &n.ServerID, &n.CooldownSec, &phase, &last,
-			&n.Delivery, &n.ChannelID, &undeliverable, &disabled); err != nil {
+			&n.Delivery, &n.ChannelID, &undeliverable, &disabled, &n.RoleID); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -186,6 +190,10 @@ func queryNotifications(tx execer, where string, args ...any) ([]rules.Notificat
 	rows.Close()
 	if len(out) == 0 {
 		return out, nil
+	}
+
+	if err := attachSchedules(tx, out); err != nil {
+		return nil, err
 	}
 
 	crows, err := tx.Query(`SELECT c.notification_id, c.kind, c.text, c.op, c.n, c.online
@@ -251,8 +259,8 @@ func (s *Store) Process(serverID int64, cur rules.Snapshot, now time.Time) ([]ru
 		if tracksBlacklisted(n, blacklists[n.Scope]) {
 			continue
 		}
-		if cur.Source == "gametracker" && !settings[n.Scope].GameTracker {
-			continue // this Discord server only counts direct answers (E22): nothing changes for it
+		if n.RoleID != "" && (!settings[n.Scope].ChannelDelivery || !settings[n.Scope].RoleMentions) {
+			continue // a role is pinged in a channel; channel delivery or role mentions are off here (E25)
 		}
 		forAll := n.ServerID == rules.AllServers
 		if forAll { // its phase and last firing for this server

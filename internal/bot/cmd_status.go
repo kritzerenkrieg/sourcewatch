@@ -35,17 +35,11 @@ func runStatus(b *Bot, in *discordgo.Interaction, _ []*discordgo.ApplicationComm
 			hidden[strings.ToLower(n)] = true
 		}
 	}
-	direct := !a.InGuild || b.guildSettings(a).GameTracker // false: this Discord server turned GameTracker off (E22)
 	var sb strings.Builder
 	for _, srv := range servers {
 		st, at, err := b.deps.Store.ServerState(srv.ID)
 		if err != nil {
 			return b.fail("read state", err)
-		}
-		if st != nil && st.Source == "gametracker" && !direct {
-			// The data came from GameTracker, which this Discord server does not use.
-			sb.WriteString(fmt.Sprintf("%s: **no direct answer**, and GameTracker is turned off in this Discord server.\n", code(srv.Addr)))
-			continue
 		}
 		if st != nil && len(hidden) > 0 {
 			view := *st
@@ -97,10 +91,6 @@ func statusBlock(s store.ServerRef, st *rules.Snapshot, at, now time.Time, maxNa
 		return fmt.Sprintf("%s: no data yet, the first poll is still pending.\n", code(s.Addr))
 	}
 	updated := "Updated " + ago(now.Sub(at))
-	if st.Source == "gametracker" {
-		// Not our own query: say where it came from and how old it is.
-		updated = "Via GameTracker, scanned " + ago(now.Sub(st.DataAt))
-	}
 	switch {
 	case st.Online:
 		return fmt.Sprintf("%s: **online**, %d/%d players, map %s. %s.\n",

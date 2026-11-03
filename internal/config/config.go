@@ -20,8 +20,6 @@ type Config struct {
 	GuildID string `json:"guild_id"`
 	// Database is the SQLite file. Defaults to sourcewatch.db in the working directory.
 	Database string `json:"database"`
-	// DisableGameTracker turns off the GameTracker fallback (B5).
-	DisableGameTracker bool `json:"disable_gametracker"`
 	// Servers are A2S addresses, "host:port" (B1).
 	Servers []string `json:"servers"`
 }

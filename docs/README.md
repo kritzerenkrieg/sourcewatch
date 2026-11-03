@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="sourcewatch" width="160">
+  <img src="../assets/logo.png" alt="sourcewatch" width="160">
 </p>
 
 # sourcewatch — game server alerts
@@ -39,7 +39,9 @@ Only you can see the bot's replies to your commands, except `/status` and `/noti
 | `/notify list` · `/notify show` | Show your notifications to you, or to everyone in the channel |
 | `/notify remove` | Delete one notification by its ID |
 | `/notify settings` | See or change the cooldown, on/off and delivery of one notification, or all of them |
+| `/notify schedule` | Only let notifications fire on chosen weekdays and hours (UTC) |
 | `/notify reset` | Delete all your notifications here (it asks first) |
+| `/notify-role …` | The same, but the notifications ping a role and belong to the whole Discord server (Manage Server) |
 | `/admin settings` | For admins: channel delivery, default delivery, default cooldown, switching the bot off, and a player blacklist (needs **Manage Server**) |
 | `/help` | A short reminder of all this |
 | `/version` | Which version of sourcewatch is running |
@@ -56,7 +58,6 @@ Only you can see the bot's replies to your commands, except `/status` and `/noti
 
 `/status` has no options. It shows every game server you watch: online or offline, players, map, how fresh the data is, and the names of the players who are online. The reply is **public**, so everyone in the channel sees it, which makes it good for answering "is anyone on?". Players on the Discord server's blacklist are left out of the names.
 
-If a server blocks direct queries, sourcewatch falls back to GameTracker (an admin can turn that off with `/admin settings gametracker`). The line then says **Via GameTracker, scanned N min ago**, and that data can be a few minutes old.
 
 ## Notifications — `/notify`
 
@@ -130,6 +131,28 @@ Examples:
 - `/notify settings id:12 cooldown:60` changes just one.
 - `/notify settings` on its own shows how many are on or off.
 
+## Schedule — `/notify schedule`
+
+`/notify schedule time:20:00-23:30 day:0000011` lets a notification fire only inside that window.
+
+- `time` is `HH:MM-HH:MM` in **UTC**. A window may pass midnight (`22:00-02:00`) and then belongs to the day it opens on. `time:off` removes the schedule.
+- `day` is seven digits, Monday first, `1` for a day it may fire: `0000011` is Saturday and Sunday, `1111100` the weekdays. Leave it out for every day.
+- Without `id` the schedule is for **all** your notifications here. With `id:12` it is for that one and **overrides** the one for all. An `id` you do not have is refused.
+- The reply also writes the window as Discord timestamps (like <t:1793131200:t>), which Discord shows in **your own timezone**, so you can check it without converting from UTC.
+- Outside the window nothing fires, and when it opens the notification starts over: it waits for its conditions to become true, and does not fire for ones that already held. `/notify list` and `/notify settings` show the schedule.
+
+## Role notifications — `/notify-role`
+
+For people with **Manage Server**, in a Discord server. It has the same subcommands as `/notify` (`map`, `player`, `playercount`, `status`, `title-query`, `list`, `show`, `remove`, `settings`, `schedule`, `reset`) with the same options, plus `role` on the type commands: the role that gets pinged.
+
+- `role` is **required** on the type commands. With `id` it must be the role that notification already has.
+- The notifications are **shared by the whole Discord server**: one numbering, and any manager can list, change or remove any of them. Your own `/notify` notifications are separate.
+- Always posted in the channel where they were made (a role cannot get a DM). `settings delivery:channel` moves one to the channel you run it in. If an admin turned `channel-delivery` off, role notifications are refused or stay silent.
+- `/notify-role settings` is `/notify settings` at **server level**. Without `id` it sets, for the whole Discord server: `cooldown` and `delivery:In this channel` (kept for new role notifications and applied to the existing ones), and `active`, one switch for all role notifications (disabled: none fires or can be made; enabled again: they start over). With `id` it changes just that notification. With no options it shows the server's settings.
+- `role` is needed for a new notification. With `id` you add a condition to an existing one, which keeps its role.
+- The message pings only that role, and nothing in a game server's name can ping anyone else. The `@everyone` role is refused, and `@here` or `@everyone` in a game-server name can never ping. Discord only pings a role that is **mentionable** (Server Settings → Roles), or if the bot has **Mention Everyone**.
+- Up to 25 per Discord server. Cooldown, conditions, the blacklist and `schedule` work as for `/notify`.
+
 ## Admin settings — `/admin settings`
 
 For people with **Manage Server**, in a Discord server. The settings are for that Discord server only. With no options, `/admin settings` shows the current ones.
@@ -140,7 +163,6 @@ For people with **Manage Server**, in a Discord server. The settings are for tha
 | `default-delivery` | **channel** (default) or **dm**: how a new notification is delivered. |
 | `default-cooldown` | Minutes: the cooldown of a new notification (default 60). |
 | `active` | **enabled** (default) or **disabled**. When disabled, sourcewatch is completely off in this Discord server: no notifications are sent and every command except `/admin` says so. DMs with the bot are not affected. |
-| `gametracker` | **enabled** (default) or **disabled**. When disabled, the game servers this Discord server watches are only ever queried directly and never looked up on GameTracker. They are declared offline after a few failed tries, and GameTracker data is not used here. |
 | `blacklist-add` | A player name nobody here can track. |
 | `blacklist-remove` | Take a name off the blacklist. |
 
@@ -215,7 +237,6 @@ sourcewatch reads the JSON file named by `SOURCEWATCH_CONFIG`, which must have m
 | `application_id` | | The application ID. When empty, the bot's own user ID is used, which is normally the same. |
 | `servers` | `SOURCEWATCH_SERVERS` | Game servers to poll even when nobody in Discord watches them, as `host:port`. The variable takes them comma-separated. These are trusted, so a server on your own network works; servers added with `/server add` must have a public address. |
 | `database` | `SOURCEWATCH_DATABASE` | The SQLite file. Default: `sourcewatch.db` in the working directory, which is `/var/lib/sourcewatch` under the service. |
-| `disable_gametracker` | | `true` turns off the GameTracker fallback for servers that block queries. Default: `false`. |
 | `guild_id` | | Only to clean up after old versions, which registered the commands for one Discord server: its ID removes that copy at startup. Leave it empty otherwise. |
 | `webhook_url` | `SOURCEWATCH_WEBHOOK_URL` | Not used. The bot posts its messages itself. |
 

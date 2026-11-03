@@ -2,6 +2,5 @@
   "discord_token": "",
   "application_id": "",
   "servers": [],
-  "database": "sourcewatch.db",
-  "disable_gametracker": false
+  "database": "sourcewatch.db"
 }

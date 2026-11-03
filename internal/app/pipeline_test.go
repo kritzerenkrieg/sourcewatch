@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/kritzerenkrieg/sourcewatch/internal/notify"
 	"github.com/kritzerenkrieg/sourcewatch/internal/poller"
@@ -102,18 +101,5 @@ func TestNoNotifierStillStoresState(t *testing.T) {
 	id, _ := st.UpsertServer("a:1")
 	if got, _ := st.LastState(id); got == nil || got.Map != "m1" {
 		t.Fatalf("state %+v", got)
-	}
-}
-
-func TestFallbackDataIsStoredWithItsSource(t *testing.T) {
-	p, st := newPipeline(t, nil)
-	scan := time.Now().Add(-6 * time.Minute)
-	u := ok("m1", "alice")
-	u.Source, u.DataAt = poller.SourceGameTracker, scan
-	p.Handle(u)
-	id, _ := st.UpsertServer("a:1")
-	got, _, _ := st.ServerState(id)
-	if got == nil || got.Source != "gametracker" || got.DataAt.UnixMilli() != scan.UnixMilli() {
-		t.Fatalf("stored %+v", got)
 	}
 }

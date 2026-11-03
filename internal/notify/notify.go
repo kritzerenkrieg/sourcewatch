@@ -33,6 +33,9 @@ type Target struct {
 	// UserIDs, for channel delivery, is everyone the one message is for. They are all mentioned,
 	// and nobody else can be. When empty, only UserID is.
 	UserIDs []string
+	// RoleID, for channel delivery, makes the message ping that role and nobody else (E25).
+	// UserID and UserIDs are not used then.
+	RoleID string
 }
 
 // MaxMentions is how many people one channel message mentions. A longer group is sent as
@@ -67,6 +70,9 @@ func NewDiscord(token string) (*Discord, error) {
 // allowed_mentions with an empty parse list and at most that one user, so names in the
 // title or message (game names are not trusted) cannot ping anyone (D2).
 func (d *Discord) Send(ctx context.Context, t Target, title, message string) error {
+	if t.RoleID != "" {
+		return d.sendRole(ctx, t, title, message)
+	}
 	users := t.users()
 	for _, u := range users {
 		if !isSnowflake(u) {
@@ -100,6 +106,29 @@ func (d *Discord) Send(ctx context.Context, t Target, title, message string) err
 		Content:         truncate(body, maxContent),
 		AllowedMentions: allowed,
 		// Server names often hold invite links. Without this Discord expands them into cards.
+		Flags: discordgo.MessageFlagsSuppressEmbeds,
+	}, discordgo.WithContext(ctx))
+	return mapErr(err)
+}
+
+// sendRole posts in a channel and pings one role. allowed_mentions lists only that role and no users,
+// so nothing in the title or message can ping anyone else (D2, E25).
+func (d *Discord) sendRole(ctx context.Context, t Target, title, message string) error {
+	if t.Delivery == rules.DeliveryDM {
+		return fmt.Errorf("a role cannot be messaged by DM")
+	}
+	if !isSnowflake(t.RoleID) {
+		return fmt.Errorf("invalid role id %q", t.RoleID)
+	}
+	if !isSnowflake(t.ChannelID) {
+		return fmt.Errorf("invalid channel id %q", t.ChannelID)
+	}
+	_, err := d.s.ChannelMessageSendComplex(t.ChannelID, &discordgo.MessageSend{
+		Content: truncate("<@&"+t.RoleID+"> **"+title+"**\n"+message, maxContent),
+		AllowedMentions: &discordgo.MessageAllowedMentions{
+			Parse: []discordgo.AllowedMentionType{},
+			Roles: []string{t.RoleID},
+		},
 		Flags: discordgo.MessageFlagsSuppressEmbeds,
 	}, discordgo.WithContext(ctx))
 	return mapErr(err)
@@ -154,6 +183,17 @@ func groupEvents(events []rules.Event) []message {
 	var out []message
 	index := map[string]int{} // the group being filled, by channel and text
 	for _, ev := range events {
+		if ev.RoleID != "" { // a role notification: one message per role, channel and text
+			key := "role\x00" + ev.RoleID + "\x00" + ev.ChannelID + "\x00" + ev.Title + "\x00" + ev.Message
+			i, ok := index[key]
+			if !ok {
+				index[key] = len(out)
+				out = append(out, message{target: Target{Delivery: rules.DeliveryChannel, ChannelID: ev.ChannelID, RoleID: ev.RoleID}, title: ev.Title, message: ev.Message})
+				i = len(out) - 1
+			}
+			out[i].notificationIDs = append(out[i].notificationIDs, ev.NotificationID)
+			continue
+		}
 		t := Target{Delivery: ev.Delivery, ChannelID: ev.ChannelID, UserID: ev.UserID}
 		if ev.Delivery == rules.DeliveryDM {
 			out = append(out, message{target: t, title: ev.Title, message: ev.Message, notificationIDs: []int64{ev.NotificationID}})

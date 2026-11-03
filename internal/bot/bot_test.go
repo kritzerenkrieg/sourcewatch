@@ -332,25 +332,6 @@ func TestInviteLinksInNamesStayInsideCodeSpans(t *testing.T) {
 	}
 }
 
-func TestStatusSaysWhenDataCameFromGameTracker(t *testing.T) {
-	e := newEnv(t)
-	setupGuild(t, e, "a.example:27015")
-	ref := mustServer(t, e, "guild:g1")
-	snap := rules.Snapshot{Online: true, Title: "Zombie", Map: "m", Players: 3, MaxPlayers: 64, NamesKnown: true,
-		Source: "gametracker", DataAt: time.Now().Add(-7 * time.Minute)}
-	e.st.Apply(ref.ID, snap, time.Now())
-	got := e.b.execute(guild("u1", 0, "status"))
-	contains(t, got, "Zombie", "online", "3/64", "Via GameTracker, scanned 7 min ago")
-	if strings.Contains(got, "Updated") {
-		t.Errorf("should describe the data's age, not our poll: %q", got)
-	}
-	snap.Source, snap.DataAt = "a2s", time.Now()
-	e.st.Apply(ref.ID, snap, time.Now())
-	if got := e.b.execute(guild("u1", 0, "status")); strings.Contains(got, "GameTracker") {
-		t.Errorf("A2S data labelled as GameTracker: %q", got)
-	}
-}
-
 func TestRepliesAreEphemeralWithoutPreviewsOrPings(t *testing.T) {
 	d := replyData("Zombie Escape | discord.gg/nide")
 	if d.Flags&discordgo.MessageFlagsEphemeral == 0 {
@@ -492,7 +473,7 @@ func TestCommandsAreRegisteredGloballyAndOldGuildCopyRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%d %v", n, err)
 	}
-	if n != 6 || len(f.calls) != 2 || f.calls[0] != (regCall{"", 6}) || f.calls[1] != (regCall{"456", 0}) {
+	if n != 7 || len(f.calls) != 2 || f.calls[0] != (regCall{"", 7}) || f.calls[1] != (regCall{"456", 0}) {
 		t.Fatalf("calls %+v: want one global registration of all commands, then the old server-only copy emptied", f.calls)
 	}
 	f = &fakeRegistrar{}
@@ -648,7 +629,7 @@ func TestCommandsAreTopLevelWithNotifyHoldingTheNotificationCommands(t *testing.
 	for _, c := range commands() {
 		names = append(names, c.Name)
 	}
-	if want := []string{"server", "notify", "status", "admin", "help", "version"}; !reflect.DeepEqual(names, want) {
+	if want := []string{"server", "notify", "notify-role", "status", "admin", "help", "version"}; !reflect.DeepEqual(names, want) {
 		t.Fatalf("commands %v, want %v", names, want)
 	}
 	notify, _ := find("notify")
@@ -659,7 +640,7 @@ func TestCommandsAreTopLevelWithNotifyHoldingTheNotificationCommands(t *testing.
 		}
 		subs = append(subs, o.Name)
 	}
-	if want := []string{"map", "player", "playercount", "status", "title-query", "list", "show", "remove", "settings", "reset"}; !reflect.DeepEqual(subs, want) {
+	if want := []string{"map", "player", "playercount", "status", "title-query", "list", "show", "remove", "settings", "schedule", "reset"}; !reflect.DeepEqual(subs, want) {
 		t.Fatalf("/notify subcommands %v, want %v", subs, want)
 	}
 }
@@ -1555,7 +1536,7 @@ func TestResetDoesNothingWhileTurnedOff(t *testing.T) {
 
 func TestButtonsAreSentWithTheReply(t *testing.T) {
 	f := &fakeResponder{}
-	btn := resetButtons(2)
+	btn := resetButtons(2, false)
 	answer(f, quietLog(), &discordgo.Interaction{}, false, func() reply { return reply{content: "sure?", components: btn} })
 	if len(f.data) != 1 || len(f.data[0].Components) != 1 || f.data[0].Flags&discordgo.MessageFlagsEphemeral == 0 {
 		t.Fatalf("%+v", f.data)
@@ -2335,25 +2316,6 @@ func TestBlacklistRemoveSuggestsOnlyBlacklistedNamesToAdmins(t *testing.T) {
 	}
 }
 
-func TestAdminGameTrackerSettingAndStatus(t *testing.T) {
-	e := newEnv(t)
-	setupGuild(t, e, "a.example:27015")
-	contains(t, e.b.execute(guild("admin", manage, "admin", subcommand("settings"))), "GameTracker fallback: enabled")
-	got := e.b.execute(guild("admin", manage, "admin", subcommand("settings", str("gametracker", "disabled"))))
-	contains(t, got, "Settings saved", "GameTracker fallback: **disabled**")
-
-	srvs, _ := e.st.ListenerServers("guild:g1")
-	snap := rules.Snapshot{Online: true, Title: "Zombie", Map: "m", Players: 3, MaxPlayers: 64, NamesKnown: true, Source: "gametracker", DataAt: time.Now()}
-	e.st.Apply(srvs[0].ID, snap, time.Now())
-	contains(t, e.b.execute(guild("u1", 0, "status")), "no direct answer", "GameTracker is turned off")
-	if strings.Contains(e.b.execute(guild("u1", 0, "status")), "Zombie") {
-		t.Error("data from GameTracker is shown in a Discord server that turned it off")
-	}
-	// Direct data is shown as usual, and turning it on again shows GameTracker's.
-	e.b.execute(guild("admin", manage, "admin", subcommand("settings", str("gametracker", "enabled"))))
-	contains(t, e.b.execute(guild("u1", 0, "status")), "Zombie", "Via GameTracker")
-}
-
 func TestAdminCommandDefinition(t *testing.T) {
 	admin, ok := find("admin")
 	if !ok || len(admin.options) != 1 || admin.options[0].Name != "settings" || admin.options[0].Type != discordgo.ApplicationCommandOptionSubCommand {
@@ -2366,7 +2328,7 @@ func TestAdminCommandDefinition(t *testing.T) {
 		}
 		names = append(names, o.Name)
 	}
-	want := []string{"channel-delivery", "default-delivery", "default-cooldown", "active", "gametracker", "blacklist-add", "blacklist-remove"}
+	want := []string{"channel-delivery", "default-delivery", "default-cooldown", "active", "blacklist-add", "blacklist-remove"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("options %v, want %v", names, want)
 	}

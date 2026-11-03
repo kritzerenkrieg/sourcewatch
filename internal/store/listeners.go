@@ -123,6 +123,10 @@ func (s *Store) DeleteNotification(id int64, userID, scope string) (bool, error)
 	if _, err := tx.Exec("DELETE FROM conditions WHERE notification_id IN (SELECT id FROM notifications WHERE id = ? AND user_id = ? AND scope = ?)", id, userID, scope); err != nil {
 		return false, err
 	}
+	// Its own schedule goes with it (the one for all, num 0, stays).
+	if _, err := tx.Exec("DELETE FROM schedules WHERE user_id = ? AND scope = ? AND num > 0 AND num IN (SELECT num FROM notifications WHERE id = ? AND user_id = ? AND scope = ?)", userID, scope, id, userID, scope); err != nil {
+		return false, err
+	}
 	res, err := tx.Exec("DELETE FROM notifications WHERE id = ? AND user_id = ? AND scope = ?", id, userID, scope)
 	if err != nil {
 		return false, err
@@ -142,6 +146,9 @@ func (s *Store) DeleteAllNotifications(userID, scope string) (int, error) {
 		return 0, err
 	}
 	if _, err := tx.Exec("DELETE FROM conditions WHERE notification_id IN (SELECT id FROM notifications WHERE user_id = ? AND scope = ?)", userID, scope); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec("DELETE FROM schedules WHERE user_id = ? AND scope = ? AND num > 0", userID, scope); err != nil {
 		return 0, err
 	}
 	res, err := tx.Exec("DELETE FROM notifications WHERE user_id = ? AND scope = ?", userID, scope)

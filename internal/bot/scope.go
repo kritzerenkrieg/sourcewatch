@@ -14,7 +14,17 @@ type actor struct {
 	InGuild   bool
 	CanManage bool // Manage Server or Administrator (E9)
 	ChannelID string
+	// Role is set for /notify-role (E25). UserID is then the shared owner of the Discord server's role
+	// notifications, not a person, so they are numbered and counted per Discord server.
+	Role bool
 }
+
+// roleOwnerPrefix starts the owner id of a Discord server's role notifications. It is not a Discord ID,
+// so it can never clash with a person.
+const roleOwnerPrefix = "role:"
+
+// roleOwner is the shared owner of the role notifications of a place (a scope like "guild:<id>").
+func roleOwner(scope string) string { return roleOwnerPrefix + scope }
 
 func who(in *discordgo.Interaction) actor {
 	if in.Member != nil && in.Member.User != nil {

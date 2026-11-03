@@ -36,10 +36,6 @@ Keep the diagram in sync with the phase headings below: one node per phase, in o
 - [x] `A2S_PLAYER` only when players > 0, bots filtered from counts (B1, B4). Done when: a test shows no player query for an empty server and bots excluded from the count.
 - [x] Server list from config (B1). Done when: a test loads a config with two servers and polls both.
 
-- [x] GameTracker page parser: status, name, map, player count, player names and the scan age (B5). Done when: tests on a saved page cover alive, not alive, a missing Status field (offline), another server's page, and unparsable pages.
-- [x] Fallback in the poller: ask GameTracker for a server A2S cannot reach, at most every 5 minutes, using only newer scans under 20 minutes old (B5). Done when: tests cover alive, not alive, stale, fetch errors, an unchanged scan, and A2S recovering.
-- [x] `/status` says when data came from GameTracker and how old it is (B5, D3). Done when: a handler test shows "Via GameTracker, scanned N min ago".
-- [x] Live check: against a server A2S cannot reach, the fallback reports it from the real page. Done when: the service log on the deployed host shows the server online through GameTracker.
 
 ## Phase C: Store and rules
 
@@ -91,6 +87,8 @@ Keep the diagram in sync with the phase headings below: one node per phase, in o
 - [x] `/admin settings`: channel delivery, default delivery, default cooldown, active, and the player blacklist (E15). Done when: tests cover permission, each setting, that the off switch blocks every command but `/admin`, and the blacklist in creation, delivery and `/status`.
 - [x] People with the same notification in the same channel are mentioned together in one message (E16). Done when: delivery tests show one message mentioning everyone once, separate messages for different text or channels, no merging of DMs, and splitting of large groups.
 - [x] Notifications start over when sourcewatch is turned back on in a Discord server, or when a refused delivery is switched back on (E19). Done when: store tests show that in both cases a condition that became true while it was skipped does not fire, and that it fires once the condition stops and holds again.
+- [x] `/notify schedule`: weekdays and a UTC time window, for all notifications or one `id`, with the window shown as Discord timestamps (E24). Done when: rules tests cover parsing, windows past midnight and that nothing fires outside the window and it starts over; store tests cover the override and cleanup; handler tests cover all, one id, a missing id, `off` and bad input.
+- [x] `/notify-role`: the same commands for notifications shared by the Discord server that ping a role (required `role`), for Manage Server only, with server-level `settings` (E25, E26, D2). Done when: handler tests cover the permission, DMs refused, shared numbering, `role` rules and separate reset; notifier tests show `allowed_mentions` lists only the role; store tests show a role event is not turned into a DM.
 
 ## Phase F: Release
 

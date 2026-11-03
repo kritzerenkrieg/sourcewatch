@@ -76,7 +76,7 @@ func enabledOption(o opts, name string) (value, ok bool, msg string) {
 func (b *Bot) adminSettings(a actor, o opts) string {
 	var patch store.GuildPatch
 	changed := false
-	for _, name := range []string{"channel-delivery", "active", "gametracker"} {
+	for _, name := range []string{"channel-delivery", "active"} {
 		v, given, msg := enabledOption(o, name)
 		if msg != "" {
 			return msg
@@ -88,8 +88,6 @@ func (b *Bot) adminSettings(a actor, o opts) string {
 		switch name {
 		case "active":
 			patch.Active = &v
-		case "gametracker":
-			patch.GameTracker = &v
 		default:
 			patch.ChannelDelivery = &v
 		}
@@ -153,7 +151,7 @@ func (b *Bot) adminSettings(a actor, o opts) string {
 		sb.WriteString("\n" + n)
 	}
 	if !changed {
-		sb.WriteString("\nChange them with `channel-delivery`, `default-delivery`, `default-cooldown`, `active`, `gametracker`, `blacklist-add` and `blacklist-remove`.")
+		sb.WriteString("\nChange them with `channel-delivery`, `default-delivery`, `default-cooldown`, `active`, `blacklist-add` and `blacklist-remove`.")
 	}
 	return sb.String()
 }
@@ -178,11 +176,6 @@ func adminSummary(g store.GuildSettings, blacklist []string) string {
 		sb.WriteString("• Channel delivery: enabled\n")
 	} else {
 		sb.WriteString("• Channel delivery: **disabled** (notifications go by DM)\n")
-	}
-	if g.GameTracker {
-		sb.WriteString("• GameTracker fallback: enabled\n")
-	} else {
-		sb.WriteString("• GameTracker fallback: **disabled** (only direct answers from the game servers count here)\n")
 	}
 	via := "channel"
 	if g.DefaultDelivery == rules.DeliveryDM || !g.ChannelDelivery {
