@@ -30,7 +30,8 @@ const (
 )
 
 // Snapshot is the state of one server after a poll. Players excludes bots.
-// When NamesKnown is false the player list was not retrieved and is ignored.
+// When NamesKnown is false the player list was not retrieved, and the list and the count,
+// which comes from the list (B9), are ignored.
 type Snapshot struct {
 	Online      bool
 	Title       string
@@ -315,6 +316,9 @@ func (c Condition) level(cur Snapshot) level {
 		}
 		return yes(hasName(cur.PlayerNames, c.Text))
 	case KindPlayerCount:
+		if !cur.NamesKnown { // the count comes from the player list (B9)
+			return levelUnknown
+		}
 		cmp, ok := ops[c.Op]
 		return yes(ok && cmp(cur.Players, c.N))
 	}

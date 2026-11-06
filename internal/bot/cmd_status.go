@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -93,8 +94,12 @@ func statusBlock(s store.ServerRef, st *rules.Snapshot, at, now time.Time, maxNa
 	updated := "Updated " + ago(now.Sub(at))
 	switch {
 	case st.Online:
-		return fmt.Sprintf("%s: **online**, %d/%d players, map %s. %s.\n",
-			label(st.Title, s.Addr), st.Players, st.MaxPlayers, code(st.Map), updated) + playerList(st, maxNames)
+		count := strconv.Itoa(st.Players)
+		if !st.NamesKnown { // the count comes from the player list (B9)
+			count = "?"
+		}
+		return fmt.Sprintf("%s: **online**, %s/%d players, map %s. %s.\n",
+			label(st.Title, s.Addr), count, st.MaxPlayers, code(st.Map), updated) + playerList(st, maxNames)
 	case st.Title == "" && st.Map == "":
 		// Never answered, so there is no name or map to show.
 		return fmt.Sprintf("%s: **offline**, no answer yet. %s.\n", code(s.Addr), updated)
@@ -106,11 +111,11 @@ func statusBlock(s store.ServerRef, st *rules.Snapshot, at, now time.Time, maxNa
 // other people, so they stay inside it: nothing in a code block is linked, expanded or
 // formatted, and a backtick or line break in a name cannot end the block early.
 func playerList(st *rules.Snapshot, maxNames int) string {
-	if st.Players == 0 {
-		return ""
+	if !st.NamesKnown {
+		return "Players: the player list is not available right now.\n"
 	}
-	if len(st.PlayerNames) == 0 {
-		return "Players: names are not available right now.\n"
+	if st.Players == 0 || len(st.PlayerNames) == 0 {
+		return ""
 	}
 	names := make([]string, 0, len(st.PlayerNames))
 	for _, n := range st.PlayerNames {

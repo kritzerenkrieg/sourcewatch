@@ -245,6 +245,21 @@ func TestCombinedConditionsMixTypes(t *testing.T) {
 	}
 }
 
+// The count comes from the player list (B9), so without the list it is unknown too.
+func TestUnknownPlayerListLeavesPlayerCountAlone(t *testing.T) {
+	blind := snap("T", "m", 0)
+	blind.NamesKnown = false
+	n := notif(players("<", 5))
+	fired, n := run(n, snap("T", "m", 10), blind, snap("T", "m", 3))
+	if !reflect.DeepEqual(fired, []int{2}) { // not at the blind poll, where the count reads 0
+		t.Fatalf("fired %v", fired)
+	}
+	n.Phase = PhaseSpent
+	if _, n = run(n, blind); n.Phase != PhaseSpent {
+		t.Errorf("an unknown count rearmed the notification: %v", n.Phase)
+	}
+}
+
 func TestUnknownPlayerListChangesNothing(t *testing.T) {
 	blind := snap("T", "m", 1)
 	blind.NamesKnown, blind.PlayerNames = false, nil

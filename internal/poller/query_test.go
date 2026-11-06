@@ -114,14 +114,70 @@ func TestQueryHandshakeAndValidReply(t *testing.T) {
 	}
 }
 
-func TestQuerySkipsPlayersWhenOnlyBots(t *testing.T) {
+func TestQueryCountsReportedBotsOut(t *testing.T) {
 	addr, queries := fakeServer(t, infoReply(2, 2), playerReply("bot1", "bot2"))
 	st, err := Query(context.Background(), dial(t, addr))
-	if err != nil || st.Players != 0 {
+	if err != nil || st.Players != 0 || !st.NamesKnown {
 		t.Fatalf("got %+v, %v", st, err)
 	}
-	if n := queries.Load(); n != 2 { // info request + info request with challenge
-		t.Fatalf("expected 2 packets (no A2S_PLAYER), got %d", n)
+	if n := queries.Load(); n != 4 { // A2S_PLAYER is asked even when A2S_INFO reports only bots (B9)
+		t.Fatalf("expected 4 packets, got %d", n)
+	}
+}
+
+// infoReplyTV is infoReply with extra data: the game port and a SourceTV called tv.
+func infoReplyTV(players, bots byte, tv string) []byte {
+	b := bytes.NewBuffer(infoReply(players, bots))
+	b.WriteByte(0x80 | 0x40)
+	binary.Write(b, binary.LittleEndian, uint16(27015))
+	binary.Write(b, binary.LittleEndian, uint16(27020))
+	cstr(b, tv)
+	return b.Bytes()
+}
+
+// What css.nide.gg sent on 2026-11-06: 29 players and no bots in A2S_INFO, but only SourceTV and
+// 7 people in the list. The count is the list, without SourceTV and players still connecting (B9).
+func TestQueryCountsThePlayerListNotTheReportedNumber(t *testing.T) {
+	addr, _ := fakeServer(t, infoReplyTV(29, 0, "NiDE TV"), playerReply("NiDE TV", "good", "Pif Paf", "", "fruit  ", "play"))
+	st, err := Query(context.Background(), dial(t, addr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Players != 4 || !reflect.DeepEqual(st.PlayerNames, []string{"good", "Pif Paf", "fruit  ", "play"}) {
+		t.Fatalf("got %d players %q", st.Players, st.PlayerNames)
+	}
+}
+
+func TestQueryTakesSourceTVAsOneOfTheReportedBots(t *testing.T) {
+	addr, _ := fakeServer(t, infoReplyTV(4, 2, "TV"), playerReply("TV", "bot", "alice", "bob"))
+	st, err := Query(context.Background(), dial(t, addr))
+	if err != nil || st.Players != 2 { // TV is one of the 2 bots, "bot" the other
+		t.Fatalf("got %+v, %v", st, err)
+	}
+}
+
+func TestQueryWithoutThePlayerListLeavesTheCountUnknown(t *testing.T) {
+	addr, _ := fakeServer(t, infoReply(10, 0), append(header, 0x44, 3)) // truncated player list
+	st, err := Query(context.Background(), dial(t, addr))
+	if err != nil || st.NamesKnown || st.Players != 0 || st.Name != "Test Server" {
+		t.Fatalf("got %+v, %v", st, err)
+	}
+}
+
+func TestParseInfoReadsSourceTV(t *testing.T) {
+	full := infoReplyTV(3, 1, "My TV")[5:]
+	if in, err := parseInfo(full); err != nil || in.SourceTV != "My TV" || in.Players != 3 {
+		t.Fatalf("got %+v, %v", in, err)
+	}
+	// The extra data is optional: cut anywhere after the bot count, the reply still parses, without a name.
+	need := 1 + len("Test Server\x00de_dust2\x00cstrike\x00Counter-Strike\x00") + 2 + 3
+	for i := need; i < len(full); i++ {
+		if in, err := parseInfo(full[:i]); err != nil || in.SourceTV != "" {
+			t.Fatalf("parseInfo(%d bytes) = %+v, %v", i, in, err)
+		}
+	}
+	if in, err := parseInfo(infoReply(3, 1)[5:]); err != nil || in.SourceTV != "" {
+		t.Fatalf("no extra data: %+v, %v", in, err)
 	}
 }
 

@@ -43,6 +43,9 @@ type Info struct {
 	AppID                   uint16
 	Players, MaxPlayers     uint8
 	Bots                    uint8
+	// SourceTV is the name of the server's SourceTV client, which is listed among the players.
+	// It is empty when the server has no SourceTV or does not say.
+	SourceTV string
 }
 
 // PlayerList is an A2S_PLAYER reply: the names, in the server's order.
@@ -266,8 +269,9 @@ func (r *reader) fail() {
 	}
 }
 
-// parseInfo reads an A2S_INFO reply after its type byte. Only the fields up to the bot count
-// are needed; the rest (server type, OS, VAC, version and the extra data) is not read.
+// parseInfo reads an A2S_INFO reply after its type byte. The fields up to the bot count are
+// required. After them only the SourceTV name in the extra data is read, and a reply that ends
+// early there is still accepted, without it.
 func parseInfo(b []byte) (*Info, error) {
 	r := &reader{b: b}
 	r.byte() // protocol
@@ -277,7 +281,44 @@ func parseInfo(b []byte) (*Info, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
+	in.SourceTV = sourceTVName(r, in.AppID)
 	return in, nil
+}
+
+// theShipAppID has three more fields after VAC.
+const theShipAppID = 2400
+
+// Extra data flags of A2S_INFO.
+const (
+	edfPort     = 0x80
+	edfSteamID  = 0x10
+	edfSourceTV = 0x40
+)
+
+// sourceTVName reads the rest of an A2S_INFO reply, from the server type on, and returns the
+// SourceTV name, or "" when there is none or the reply ends early.
+func sourceTVName(r *reader, appID uint16) string {
+	r.skip(4) // server type, OS, visibility, VAC
+	if appID == theShipAppID {
+		r.skip(3) // mode, witnesses, duration
+	}
+	r.string() // version
+	edf := r.byte()
+	if r.err != nil || edf&edfSourceTV == 0 {
+		return ""
+	}
+	if edf&edfPort != 0 {
+		r.skip(2)
+	}
+	if edf&edfSteamID != 0 {
+		r.skip(8)
+	}
+	r.skip(2) // SourceTV port
+	name := r.string()
+	if r.err != nil {
+		return ""
+	}
+	return name
 }
 
 // parsePlayers reads an A2S_PLAYER reply after its type byte: a count, then for each player an

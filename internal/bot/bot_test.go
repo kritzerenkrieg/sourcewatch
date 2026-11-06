@@ -383,14 +383,19 @@ func TestPlayersViewEdgeCases(t *testing.T) {
 	ref := mustServer(t, e, "guild:g1")
 	view := func() string { return e.b.execute(guild("u1", 0, "status")) }
 
+	// The first poll could not read the player list, so the count is not known either (B9).
+	e.st.Apply(ref.ID, rules.Snapshot{Online: true, Title: "Alpha", Map: "m", MaxPlayers: 64, NamesKnown: false}, time.Now())
+	contains(t, view(), "?/64 players", "player list is not available")
+
 	applyOnline(e, ref.ID, "Alpha", 0)
-	if got := view(); strings.Contains(got, "```") {
+	if got := view(); strings.Contains(got, "```") || strings.Contains(got, "not available") {
 		t.Errorf("an empty server has no list: %q", got)
 	}
 
-	// Players are there but their names could not be read.
-	e.st.Apply(ref.ID, rules.Snapshot{Online: true, Title: "Alpha", Map: "m", Players: 4, MaxPlayers: 64, NamesKnown: false}, time.Now())
-	contains(t, view(), "4/64 players", "names are not available")
+	// A later poll without the list keeps the last count and names.
+	applyOnline(e, ref.ID, "Alpha", 2, "alice", "bob")
+	e.st.Apply(ref.ID, rules.Snapshot{Online: true, Title: "Alpha", Map: "m", MaxPlayers: 64, NamesKnown: false}, time.Now())
+	contains(t, view(), "2/64 players", "alice", "bob")
 
 	// Names come from other people: a backtick, line break, invite link or huge name must
 	// not break out of the block or change the layout.

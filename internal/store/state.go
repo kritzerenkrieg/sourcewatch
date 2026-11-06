@@ -112,8 +112,8 @@ func apply(tx execer, serverID int64, cur rules.Snapshot, now time.Time) (prev *
 		if err := syncSessions(tx, serverID, names, prevAt, now); err != nil {
 			return nil, cur, err
 		}
-	} else if prev != nil {
-		cur.PlayerNames, cur.NamesKnown = prev.PlayerNames, prev.NamesKnown
+	} else if prev != nil { // the count comes from the list, so it is kept with it (B9)
+		cur.PlayerNames, cur.NamesKnown, cur.Players = prev.PlayerNames, prev.NamesKnown, prev.Players
 	}
 
 	_, err = tx.Exec(`INSERT INTO server_state(server_id, online, title, map, players, max_players, names_known, updated_at)

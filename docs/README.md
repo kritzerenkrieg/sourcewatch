@@ -67,7 +67,7 @@ Each notification fires **once, when the thing becomes true**. After that it sta
 |---|---|
 | `/notify map map-name:de_dust2` | The server changes to that map. |
 | `/notify player username:Alice` | That player joins. The name must match exactly, not case-sensitive. |
-| `/notify playercount value:>=16` | The number of players matches the comparison (below). |
+| `/notify playercount value:>=16` | The number of players matches the comparison (below). Bots, SourceTV and fake players a server reports but does not list are not counted. |
 | `/notify status value:offline` | The server goes `offline`, or comes back `online`. |
 | `/notify title-query value:event` | The server name gets that word, not case-sensitive, like `[EVENT]` in the name. |
 

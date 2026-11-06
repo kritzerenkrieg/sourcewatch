@@ -24,7 +24,7 @@ Each fires **once, when the thing becomes true**, then stays quiet until it stop
 
 **`/notify map map-name:de_dust2`** — the server changes to that map
 **`/notify player username:Alice`** — that player joins (exact name, not case-sensitive)
-**`/notify playercount value:>=16`** — the number of players: `>=10` at least · `>10` more than · `<=5` at most · `<5` fewer than · `=20` exactly · `!=3` anything but. A plain `10` means at least 10 (0 to 64).
+**`/notify playercount value:>=16`** — the number of players: `>=10` at least · `>10` more than · `<=5` at most · `<5` fewer than · `=20` exactly · `!=3` anything but. A plain `10` means at least 10 (0 to 64). Bots and SourceTV are not counted.
 **`/notify status value:offline`** — the server goes `offline`, or comes back `online`
 **`/notify title-query value:event`** — the server name gets that word, like `[EVENT]`
 

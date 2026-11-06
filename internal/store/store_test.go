@@ -179,6 +179,18 @@ func TestUnknownPlayerListLeavesSessionsAlone(t *testing.T) {
 	}
 }
 
+// The count comes from the player list (B9): a poll without the list keeps the last count.
+func TestUnknownPlayerListKeepsTheLastCount(t *testing.T) {
+	s, _ := open(t)
+	id, _ := s.UpsertServer("a:1")
+	s.Apply(id, online("T", "m", "alice", "bob"), t0)
+	s.Apply(id, rules.Snapshot{Online: true, Title: "T", Map: "m", MaxPlayers: 64}, t0.Add(time.Minute))
+	got, _ := s.LastState(id)
+	if got.Players != 2 || !got.NamesKnown || len(got.PlayerNames) != 2 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
 func TestOfflineClosesSessionsAndKeepsTitle(t *testing.T) {
 	s, _ := open(t)
 	id, _ := s.UpsertServer("a:1")
